@@ -9,23 +9,13 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 async def ask_chatgpt(message: str) -> str:
     try:
         response = client.chat.completions.create(
-            model="gpt-4o",
+            model="gpt-4o",  # this works for gpt-4o and gpt-4 if content is string
             messages=[
-                {
-                    "role": "system",
-                    "content": [
-                        { "type": "text", "text": "You are a helpful assistant." }
-                    ]
-                },
-                {
-                    "role": "user",
-                    "content": [
-                        { "type": "text", "text": message }  # 👈 Ensure this is a string
-                    ]
-                }
+                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "user", "content": message}
             ],
             temperature=0.7
         )
-        return response.choices[0].message.content[0].text.strip()
+        return response.choices[0].message.content.strip()
     except Exception as e:
         return f"Error from GPT: {str(e)}"
