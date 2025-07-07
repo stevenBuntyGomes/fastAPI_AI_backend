@@ -7,25 +7,25 @@ load_dotenv()
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-# Non-streaming function (full response)
+# Non-streaming version (still usable elsewhere)
 async def ask_chatgpt(messages: List[Dict[str, str]]) -> str:
     try:
         response = client.chat.completions.create(
             model="gpt-4o",
             messages=messages,
-            temperature=0.7,
+            temperature=0.5,  # ✅ Lowered temperature for speed
         )
         return response.choices[0].message.content.strip()
     except Exception as e:
         return f"Error from GPT: {str(e)}"
 
-# Streaming function (token-by-token)
+# Streaming version
 async def ask_chatgpt_stream(messages: List[Dict[str, str]]) -> AsyncGenerator[str, None]:
     try:
         stream = client.chat.completions.create(
             model="gpt-4o",
             messages=messages,
-            temperature=0.7,
+            temperature=0.5,  # ✅ Lowered temperature for faster and more deterministic replies
             stream=True,
         )
 

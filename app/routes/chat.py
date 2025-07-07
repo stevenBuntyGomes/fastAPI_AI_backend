@@ -27,9 +27,13 @@ async def stream_chat(request: Request):
     # 3. Streaming generator
     async def gpt_event_stream():
         full_response = ""
+
+        yield ""  # ✅ kickstart the stream early
+
         async for chunk in ask_chatgpt_stream(context_messages):
             full_response += chunk
             yield chunk
+
         # 4. Save to DB after stream completes
         await memory_collection.insert_one(format_memory(user_id, message, full_response))
 
