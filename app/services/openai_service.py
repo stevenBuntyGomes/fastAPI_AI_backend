@@ -1,27 +1,19 @@
 import os
 from openai import OpenAI
 from dotenv import load_dotenv
-from typing import List, Dict, AsyncGenerator
+from typing import List, Dict
 
 load_dotenv()
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-async def ask_chatgpt_stream(messages: List[Dict[str, str]]) -> AsyncGenerator[str, None]:
+async def ask_chatgpt(messages: List[Dict[str, str]]) -> str:
     try:
-        # Start the GPT-4o stream
-        stream = client.chat.completions.create(
-            model="gpt-4o",
-            messages=messages,
-            temperature=0.7,
-            stream=True  # Enable streaming
+        response = client.chat.completions.create(
+            model="gpt-4o",  # or gpt-4 / gpt-3.5-turbo
+            messages=messages,  # 👈 Now this is your full message history
+            temperature=0.7
         )
-
-        # Yield content chunks one at a time
-        for chunk in stream:
-            delta = chunk.choices[0].delta
-            if delta and delta.content:
-                yield delta.content
-
+        return response.choices[0].message.content.strip()
     except Exception as e:
-        yield f"[ERROR] {str(e)}"
+        return f"Error from GPT: {str(e)}"
