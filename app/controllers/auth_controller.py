@@ -1,54 +1,103 @@
-# openai_service.py
-import os
-import asyncio
-from typing import AsyncGenerator
-from openai import OpenAI
-from dotenv import load_dotenv
+# app/controllers/auth_controller.py
+from fastapi import HTTPException, status
+from pydantic import EmailStr
+from datetime import datetime, timedelta
+import random
+from ..models.auth import UserModel
+from ..db.mongo import users_collection, verification_codes_collection
+from ..utils.jwt import create_jwt_token
+from ..utils.hashing import hash_password, verify_password
+from ..services.email_service import send_email_verification_code
+from ..services.oauth_utils import verify_google_token, verify_apple_token
 
-load_dotenv()
+from ..schemas.auth_schema import AuthResponse, UserOut
 
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-ASSISTANT_ID = os.getenv("OPENAI_ASSISTANT_ID")
+# STEP 1
+async def send_verification_code(email: EmailStr):
+    code = str(random.randint(100000, 999999))
+    await verification_codes_collection.update_one(
+        {"email": email},
+        {"$set": {"code": code, "expires": datetime.utcnow() + timedelta(minutes=10)}},
+        upsert=True
+    )
+    await send_email_verification_code(email, code)
+    return {"message": "📧 Verification code sent."}
 
-async def ask_chatgpt_stream_assistant(user_id: str, user_input: str) -> AsyncGenerator[str, None]:
-    try:
-        # Step 1: Create new thread
-        thread = client.beta.threads.create()
+# STEP 2
+async def verify_email_and_register(email: EmailStr, code: str, name: str, password: str) -> AuthResponse:
+    record = await verification_codes_collection.find_one({"email": email})
+    if not record or record["code"] != code:
+        raise HTTPException(status_code=400, detail="❌ Invalid or expired code.")
+    if datetime.utcnow() > record["expires"]:
+        raise HTTPException(status_code=400, detail="⏰ Code expired.")
+    if await users_collection.find_one({"email": email}):
+        raise HTTPException(status_code=400, detail="⚠️ User already exists.")
 
-        # Step 2: Add user message
-        client.beta.threads.messages.create(
-            thread_id=thread.id,
-            role="user",
-            content=user_input
-        )
+    hashed_pw = hash_password(password)
+    result = await users_collection.insert_one({
+        "email": email,
+        "name": name,
+        "password": hashed_pw,
+        "auth_provider": "email",
+        "created_at": datetime.utcnow()
+    })
 
-        # Step 3: Start run
-        run = client.beta.threads.runs.create(
-            thread_id=thread.id,
-            assistant_id=ASSISTANT_ID
-        )
+    token = create_jwt_token({"user_id": str(result.inserted_id)})
+    return {"token": token, "user": {"email": email, "name": name}}
 
-        # Step 4: Poll for completion
-        while True:
-            run_status = client.beta.threads.runs.retrieve(
-                thread_id=thread.id,
-                run_id=run.id
-            )
-            if run_status.status in ["completed", "failed", "cancelled", "expired"]:
-                break
-            await asyncio.sleep(0.5)
+# STEP 3
+# STEP 3: Login with Email/Password
+async def login_with_email_password(email: EmailStr, password: str):
+    user_dict = await users_collection.find_one({"email": email})
+    if not user_dict or not verify_password(password, user_dict.get("password", "")):
+        raise HTTPException(status_code=401, detail="❌ Invalid credentials.")
 
-        # Step 5: Retrieve messages
-        messages = client.beta.threads.messages.list(thread_id=thread.id)
-        assistant_messages = [m for m in reversed(messages.data) if m.role == "assistant"]
+    # ✅ Parse DB data into a model
+    user = UserModel(**user_dict)
 
-        if not assistant_messages or not assistant_messages[0].content:
-            yield "[ERROR] GPT returned an empty response."
-        else:
-            for block in assistant_messages[0].content:
-                if block.type == "text":
-                    yield block.text.value
+    token = create_jwt_token({"user_id": str(user.id)})
 
-    except Exception as e:
-        print("❌ GPT Error:", e)
-        yield f"[ERROR] {str(e)}"
+    # ✅ Return only safe fields via UserOut schema
+    return {
+        "token": token,
+        "user": UserOut(**user.dict())  # Converts model → safe schema
+    }
+
+
+# STEP 4
+async def login_with_google(token_id: str) -> AuthResponse:
+    payload = verify_google_token(token_id)
+    if not payload:
+        raise HTTPException(status_code=401, detail="❌ Invalid Google token.")
+    email = payload["email"]
+    name = payload.get("name", "Google User")
+    user = await users_collection.find_one({"email": email})
+    if not user:
+        result = await users_collection.insert_one({
+            "email": email,
+            "name": name,
+            "auth_provider": "google",
+            "created_at": datetime.utcnow()
+        })
+        user = {"_id": result.inserted_id, "email": email, "name": name}
+    token = create_jwt_token({"user_id": str(user["_id"])})
+    return {"token": token, "user": {"email": user["email"], "name": user["name"]}}
+
+# STEP 5
+async def login_with_apple(identity_token: str) -> AuthResponse:
+    payload = verify_apple_token(identity_token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="❌ Invalid Apple token.")
+    email = payload["email"]
+    name = payload.get("name", "Apple User")
+    user = await users_collection.find_one({"email": email})
+    if not user:
+        result = await users_collection.insert_one({
+            "email": email,
+            "name": name,
+            "auth_provider": "apple",
+            "created_at": datetime.utcnow()
+        })
+        user = {"_id": result.inserted_id, "email": email, "name": name}
+    token = create_jwt_token({"user_id": str(user["_id"])})
+    return {"token": token, "user": {"email": user["email"], "name": user["name"]}}
