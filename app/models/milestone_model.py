@@ -1,19 +1,18 @@
-from pydantic import BaseModel, EmailStr, Field
-from typing import Optional
+from pydantic import BaseModel, Field
+from typing import Optional, List
 from datetime import datetime
 from bson import ObjectId
 from typing_extensions import Annotated
 from pydantic.functional_validators import BeforeValidator
 
-# ✅ Converts ObjectId to string before validation
 PyObjectId = Annotated[str, BeforeValidator(lambda x: str(x))]
 
-class UserModel(BaseModel):
+class MilestoneModel(BaseModel):
     id: Optional[PyObjectId] = Field(alias="_id", default=None)
-    email: EmailStr
-    name: Optional[str] = None
-    password: Optional[str] = None
-    auth_provider: str = "email"
+    user_id: PyObjectId  # Linked to authenticated user
+    milestones_unlocked: List[str] = Field(default_factory=list)  # List of milestone IDs or names
+    last_relapse_date: Optional[datetime] = None
+
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
     model_config = {

@@ -1,19 +1,16 @@
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, Field
 from typing import Optional
 from datetime import datetime
 from bson import ObjectId
 from typing_extensions import Annotated
 from pydantic.functional_validators import BeforeValidator
 
-# ✅ Converts ObjectId to string before validation
 PyObjectId = Annotated[str, BeforeValidator(lambda x: str(x))]
 
-class UserModel(BaseModel):
+class LungReliningModel(BaseModel):
     id: Optional[PyObjectId] = Field(alias="_id", default=None)
-    email: EmailStr
-    name: Optional[str] = None
-    password: Optional[str] = None
-    auth_provider: str = "email"
+    user_id: PyObjectId  # Links to authenticated user
+    last_relapse_date: datetime  # Used for healing stage calculation
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
     model_config = {

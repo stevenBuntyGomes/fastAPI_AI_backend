@@ -1,8 +1,7 @@
 from pydantic import BaseModel
 
 class ChatRequest(BaseModel):
-    user_id: str
-    message: str
+    message: str  # Only message is needed from the frontend
 
 class ChatResponse(BaseModel):
     response: str

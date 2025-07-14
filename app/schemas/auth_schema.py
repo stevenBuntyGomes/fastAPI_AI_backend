@@ -1,7 +1,12 @@
-# app/schemas/auth_schema.py
 from pydantic import BaseModel, EmailStr
 from typing import Optional
+from typing_extensions import Annotated
+from pydantic.functional_validators import BeforeValidator
 
+# For MongoDB ObjectId support
+PyObjectId = Annotated[str, BeforeValidator(lambda x: str(x))]
+
+# ✅ Request Schemas
 class SendCodeRequest(BaseModel):
     email: EmailStr
 
@@ -16,10 +21,13 @@ class LoginRequest(BaseModel):
     password: str
 
 class OAuthRequest(BaseModel):
-    token_id: str  # for Google
-    identity_token: Optional[str] = None  # for Apple
+    token_id: str  # For Google Login
+    identity_token: Optional[str] = None  # For Apple Login
 
+
+# ✅ Response Schemas
 class UserOut(BaseModel):
+    id: Optional[PyObjectId]
     email: EmailStr
     name: Optional[str]
 

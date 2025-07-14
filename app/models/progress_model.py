@@ -1,20 +1,22 @@
-# app/models/memory_model.py
-
+# app/models/progress_model.py
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
 from bson import ObjectId
 from typing_extensions import Annotated
 from pydantic.functional_validators import BeforeValidator
 
-# Shared PyObjectId for MongoDB compatibility
 PyObjectId = Annotated[str, BeforeValidator(lambda x: str(x))]
 
-class MemoryModel(BaseModel):
+class ProgressModel(BaseModel):
     id: Optional[PyObjectId] = Field(alias="_id", default=None)
-    user_id: PyObjectId  # Reference to the authenticated user's ID
-    message: str
-    response: str
+    user_id: PyObjectId  # Links to the authenticated user
+    last_relapse_date: Optional[datetime] = None
+    quit_date: Optional[datetime] = None
+    days_tracked: List[datetime] = Field(default_factory=list)
+    lung_check_history: List[dict] = Field(default_factory=list)  # Each: {"timestamp": datetime, "duration": float}
+    milestones_unlocked: List[str] = Field(default_factory=list)
+
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
     model_config = {

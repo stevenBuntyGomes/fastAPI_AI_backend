@@ -1,19 +1,22 @@
-from pydantic import BaseModel, EmailStr, Field
-from typing import Optional
+# app/models/lung_check_model.py
+
+from pydantic import BaseModel, Field
+from typing import Optional, List
 from datetime import datetime
 from bson import ObjectId
 from typing_extensions import Annotated
 from pydantic.functional_validators import BeforeValidator
 
-# ✅ Converts ObjectId to string before validation
 PyObjectId = Annotated[str, BeforeValidator(lambda x: str(x))]
 
-class UserModel(BaseModel):
+class LungCheckEntry(BaseModel):
+    timestamp: datetime
+    duration: float  # Duration in seconds
+
+class LungCheckModel(BaseModel):
     id: Optional[PyObjectId] = Field(alias="_id", default=None)
-    email: EmailStr
-    name: Optional[str] = None
-    password: Optional[str] = None
-    auth_provider: str = "email"
+    user_id: PyObjectId  # Reference to authenticated user
+    lung_check_history: List[LungCheckEntry] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
     model_config = {

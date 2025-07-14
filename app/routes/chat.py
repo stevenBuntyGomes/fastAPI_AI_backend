@@ -1,18 +1,23 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import StreamingResponse
 from ..schemas.chat import ChatRequest
 from ..services.openai_service import ask_chatgpt_stream_assistant
+from ..utils.auth_utils import get_current_user
 
 router = APIRouter()
 
 @router.post("/chat/stream")
-async def chat_stream(request: ChatRequest):
+async def chat_stream(
+    request: ChatRequest,
+    current_user: dict = Depends(get_current_user)  # ✅ Secure route
+):
     try:
-        if not request.user_id or not request.message:
-            raise HTTPException(status_code=400, detail="Missing user_id or message")
+        user_id = str(current_user["_id"])  # Use authenticated user's ObjectId
+        if not request.message:
+            raise HTTPException(status_code=400, detail="Missing message")
 
         async def gpt_event_stream():
-            async for chunk in ask_chatgpt_stream_assistant(request.user_id, request.message):
+            async for chunk in ask_chatgpt_stream_assistant(user_id, request.message):
                 if chunk:
                     yield chunk
 
