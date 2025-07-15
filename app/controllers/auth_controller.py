@@ -11,7 +11,7 @@ from ..db.mongo import (
     verification_codes_collection,
     onboarding_collection,
 )
-from ..utils.jwt import create_jwt_token
+from ..utils.jwt_utils import create_jwt_token
 from ..utils.hashing import hash_password, verify_password
 from ..services.email_service import send_email_verification_code
 from ..services.oauth_utils import verify_google_token, verify_apple_token
