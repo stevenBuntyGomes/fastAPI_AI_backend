@@ -9,4 +9,8 @@ from .mongo import (
     milestone_collection, 
     recovery_collection,
     onboarding_collection,
+    community_collection,
+    friend_collection,
+    mypod_collection,
 )
+ 

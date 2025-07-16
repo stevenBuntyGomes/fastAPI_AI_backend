@@ -22,4 +22,6 @@ lung_relining_collection = db["lung_relining"]
 milestone_collection = db["milestone"]  
 recovery_collection = db["recovery"]
 onboarding_collection = db["onboarding"]  
-
+community_collection = db["community"]
+friend_collection = db["friends"]
+mypod_collection = db["mypods"]

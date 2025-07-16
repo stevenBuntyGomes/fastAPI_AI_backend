@@ -6,6 +6,9 @@ from app.routes.progress import router as progress_router
 from app.routes.lung_check import router as lung_check_router
 from app.routes.lung_relining import router as lung_relining_router
 from app.routes.recovery import router as recovery_router
+from app.routes.community import router as community_router
+from app.routes.friend import router as friend_router
+from app.routes.mypod_routes import router as mypod_router
 
 app = FastAPI(title="Voice AI Backend", version="1.0.0")
 
@@ -38,3 +41,6 @@ app.include_router(progress_router)
 app.include_router(lung_check_router)
 app.include_router(lung_relining_router)
 app.include_router(recovery_router)
+app.include_router(community_router)
+app.include_router(friend_router)
+app.include_router(mypod_router)
