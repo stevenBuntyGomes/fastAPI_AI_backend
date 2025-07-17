@@ -5,20 +5,19 @@ from bson import ObjectId
 from fastapi import HTTPException, status
 
 from app.db.mongo import community_collection
-from app.models.auth import UserModel
 from app.schemas.community_schema import (
     PostCreateRequest,
     PostResponse,
     CommentCreateRequest,
     PostUpdateRequest,
+    CommentSchema,  # ✅ make sure this is imported here
 )
 
-
 # ✅ Create a new post
-async def create_post(post_data: PostCreateRequest, current_user: UserModel) -> PostResponse:
+async def create_post(post_data: PostCreateRequest, current_user: dict) -> PostResponse:
     post = {
         "post_text": post_data.post_text,
-        "post_author_id": str(current_user.id),
+        "post_author_id": str(current_user["_id"]),  # ✅ fixed
         "post_visibility": post_data.post_visibility,
         "post_timestamp": datetime.utcnow(),
         "likes_count": 0,
@@ -32,7 +31,7 @@ async def create_post(post_data: PostCreateRequest, current_user: UserModel) -> 
 
 
 # ✅ Get all posts
-async def get_all_posts(current_user: UserModel) -> List[PostResponse]:
+async def get_all_posts(current_user: dict) -> List[PostResponse]:
     posts_cursor = community_collection.find(
         {"post_visibility": {"$in": ["community", "friends_only"]}}
     ).sort("post_timestamp", -1)
@@ -46,7 +45,7 @@ async def get_all_posts(current_user: UserModel) -> List[PostResponse]:
 
 
 # ✅ Like a post
-async def like_post(post_id: str, current_user: UserModel):
+async def like_post(post_id: str, current_user: dict):
     if not ObjectId.is_valid(post_id):
         raise HTTPException(status_code=400, detail="Invalid post ID")
 
@@ -55,7 +54,7 @@ async def like_post(post_id: str, current_user: UserModel):
     if not post:
         raise HTTPException(status_code=404, detail="Post not found")
 
-    user_id_str = str(current_user.id)
+    user_id_str = str(current_user["_id"])  # ✅ fixed
 
     if user_id_str in post.get("liked_by", []):
         raise HTTPException(status_code=400, detail="Already liked")
@@ -71,21 +70,17 @@ async def like_post(post_id: str, current_user: UserModel):
     return {"message": "Post liked successfully"}
 
 
-from app.schemas.community_schema import CommentSchema  # ✅ make sure this is imported at the top
-
 # ✅ Add a comment and return the comment as a validated CommentSchema
-async def add_comment(post_id: str, comment_data: CommentCreateRequest, current_user: UserModel) -> CommentSchema:
+async def add_comment(post_id: str, comment_data: CommentCreateRequest, current_user: dict) -> CommentSchema:
     if not ObjectId.is_valid(post_id):
         raise HTTPException(status_code=400, detail="Invalid post ID")
 
-    # Build the comment
     comment = {
         "comment_text": comment_data.comment_text,
-        "comment_author_id": str(current_user.id),
+        "comment_author_id": str(current_user["_id"]),  # ✅ fixed
         "comment_timestamp": datetime.utcnow()
     }
 
-    # Push the comment into the post
     result = await community_collection.update_one(
         {"_id": ObjectId(post_id)},
         {"$push": {"comments": comment}}
@@ -94,7 +89,6 @@ async def add_comment(post_id: str, comment_data: CommentCreateRequest, current_
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Post not found")
 
-    # Return the added comment as a validated schema
     return CommentSchema(**comment)
 
 

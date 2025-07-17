@@ -6,12 +6,12 @@ class RecoveryCreateRequest(BaseModel):
     last_relapse_date: datetime
 
 class UserPreview(BaseModel):
-    id: str
+    id: str  # ✅ Removed alias to avoid pydantic mismatch
     email: str
     name: Optional[str]
 
 class RecoveryResponse(BaseModel):
     last_relapse_date: datetime
-    quit_date: datetime  # last_relapse_date + 90 days
-    recovery_percentage: float  # % toward recovery
+    quit_date: datetime
+    recovery_percentage: float
     user: UserPreview
