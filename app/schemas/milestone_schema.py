@@ -1,15 +1,14 @@
-from pydantic import BaseModel
-from typing import List, Optional
+# app/schemas/milestone_schema.py
+
+from pydantic import BaseModel, Field
+from typing import Optional
 from datetime import datetime
 
-class MilestoneCreateRequest(BaseModel):
-    milestones_unlocked: List[str]
-    last_relapse_date: Optional[datetime]
-
-class MilestoneResponse(BaseModel):
-    milestones_unlocked: List[str]
-    last_relapse_date: Optional[datetime]
-    created_at: datetime
+class MilestoneSchema(BaseModel):
+    name: str
+    description: str
+    time_in_minutes: int
+    created_at: Optional[datetime] = Field(default_factory=datetime.utcnow)
 
     class Config:
         orm_mode = True

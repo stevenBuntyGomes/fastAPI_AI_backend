@@ -9,6 +9,7 @@ from app.routes.recovery import router as recovery_router
 from app.routes.community import router as community_router
 from app.routes.friend import router as friend_router
 from app.routes.mypod_routes import router as mypod_router
+from app.routes.milestone import router as milestone_router
 
 app = FastAPI(title="Voice AI Backend", version="1.0.0")
 
@@ -44,3 +45,4 @@ app.include_router(recovery_router)
 app.include_router(community_router)
 app.include_router(friend_router)
 app.include_router(mypod_router)
+app.include_router(milestone_router)

@@ -30,6 +30,7 @@ class UserOut(BaseModel):
     id: Optional[PyObjectId]
     email: EmailStr
     name: Optional[str]
+    aura: int = 0  
 
 class AuthResponse(BaseModel):
     token: str

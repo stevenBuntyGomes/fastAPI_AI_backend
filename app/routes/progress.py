@@ -6,7 +6,6 @@ from typing import Dict
 
 router = APIRouter()
 
-
 # ✅ Save or update progress (Authenticated)
 @router.post("/progress", summary="Create or update user progress")
 async def save_progress(
@@ -20,3 +19,9 @@ async def save_progress(
 @router.get("/progress", summary="Get progress for logged-in user")
 async def get_progress(current_user: Dict = Depends(get_current_user)):
     return await progress_controller.get_user_progress(str(current_user["_id"]))
+
+# ✅ Reset user progress (Authenticated)
+@router.post("/progress/reset", summary="Reset progress for logged-in user")
+async def reset_progress(current_user: Dict = Depends(get_current_user)):
+    return await progress_controller.reset_user_progress(str(current_user["_id"]))
+

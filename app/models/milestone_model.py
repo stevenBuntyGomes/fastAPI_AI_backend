@@ -1,5 +1,7 @@
+# app/models/milestone_model.py
+
 from pydantic import BaseModel, Field
-from typing import Optional, List
+from typing import Optional
 from datetime import datetime
 from bson import ObjectId
 from typing_extensions import Annotated
@@ -9,9 +11,9 @@ PyObjectId = Annotated[str, BeforeValidator(lambda x: str(x))]
 
 class MilestoneModel(BaseModel):
     id: Optional[PyObjectId] = Field(alias="_id", default=None)
-    user_id: PyObjectId  # Linked to authenticated user
-    milestones_unlocked: List[str] = Field(default_factory=list)  # List of milestone IDs or names
-    last_relapse_date: Optional[datetime] = None
+    name: str  # e.g. "Heart Reset"
+    description: str  # e.g. "Your heart rate and blood pressure start dropping..."
+    time_in_minutes: int  # Time from relapse to unlock (e.g. 20, 120, 600)
 
     created_at: datetime = Field(default_factory=datetime.utcnow)
 

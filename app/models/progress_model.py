@@ -14,7 +14,6 @@ class ProgressModel(BaseModel):
     last_relapse_date: Optional[datetime] = None
     quit_date: Optional[datetime] = None
     days_tracked: List[datetime] = Field(default_factory=list)
-    lung_check_history: List[dict] = Field(default_factory=list)  # Each: {"timestamp": datetime, "duration": float}
     milestones_unlocked: List[str] = Field(default_factory=list)
 
     created_at: datetime = Field(default_factory=datetime.utcnow)

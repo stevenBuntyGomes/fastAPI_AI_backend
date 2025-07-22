@@ -2,15 +2,22 @@ from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime
 
+class AuthorPreview(BaseModel):
+    id: str
+    name: Optional[str]
+    profile_picture: Optional[str] = None
+
 
 class CommentCreateRequest(BaseModel):
     comment_text: str
 
 # Comment Schema
 class CommentSchema(BaseModel):
+    id: str
     comment_text: str
     comment_author_id: str
     comment_timestamp: Optional[datetime] = None
+    author: Optional[AuthorPreview] = None  
 
 
 # Post Schema
@@ -55,6 +62,7 @@ class PostResponse(BaseModel):
     post_text: str
     post_author_id: str
     post_visibility: str
+    author: Optional[AuthorPreview] = None
     post_timestamp: Optional[datetime] = None
     likes_count: int = 0
     liked_by: List[str] = []

@@ -10,9 +10,12 @@ from app.schemas.community_schema import (
 )
 from app.controllers.community_controller import (
     create_post,
+    remove_post_by_id,
     get_all_posts,
     like_post,
     add_comment,
+    update_comment,
+    delete_comment,
     update_post,
     delete_post,
 )
@@ -30,13 +33,27 @@ async def create_community_post(
 ):
     return await create_post(post_data, current_user)
 
-
-# ✅ Get all posts
-@router.get("/posts", response_model=List[PostResponse], summary="Get all community posts")
-async def get_community_posts(
+# ✅ Remove post by ID (entire post delete)
+@router.delete("/remove/{post_id}", summary="Remove a post by ID")
+async def remove_post_route(
+    post_id: str,
     current_user: UserModel = Depends(get_current_user)
 ):
-    return await get_all_posts(current_user)
+    return await remove_post_by_id(post_id, current_user)
+
+
+# ✅ Get all posts
+@router.get(
+    "/posts",
+    response_model=List[PostResponse],
+    summary="Get paginated community posts"
+)
+async def get_community_posts(
+    skip: int = 0,                # ⬅️ How many posts to skip (offset)
+    limit: int = 6,               # ⬅️ How many posts to return (default 6)
+    current_user: UserModel = Depends(get_current_user)
+):
+    return await get_all_posts(current_user, skip, limit)
 
 
 # ✅ Like a post
@@ -51,13 +68,47 @@ async def like_community_post(
 # ✅ Add a comment
 
 # ✅ Add a comment (returns the created comment)
-@router.post("/comment/{post_id}", response_model=CommentSchema, summary="Add a comment to a post")
+@router.post(
+    "/comment/{post_id}",
+    response_model=PostResponse,
+    summary="Add a comment and return updated post"
+)
 async def add_community_comment(
     post_id: str,
     comment_data: CommentCreateRequest,
     current_user: UserModel = Depends(get_current_user)
 ):
     return await add_comment(post_id, comment_data, current_user)
+
+
+@router.put(
+    "/comment/{post_id}/{comment_id}",
+    response_model=PostResponse,
+    summary="Update a specific comment on a post and return updated post"
+)
+async def update_community_comment(
+    post_id: str,
+    comment_id: str,
+    new_text: str,
+    current_user: UserModel = Depends(get_current_user)
+):
+    return await update_comment(post_id, comment_id, new_text, current_user)
+
+
+
+@router.delete(
+    "/comment/{post_id}/{comment_id}",
+    response_model=PostResponse,
+    summary="Delete a specific comment from a post and return the updated post"
+)
+async def delete_community_comment(
+    post_id: str,
+    comment_id: str,
+    current_user: UserModel = Depends(get_current_user)
+):
+    return await delete_comment(post_id, comment_id, current_user)
+
+
 
 
 @router.put("/update/{post_id}")

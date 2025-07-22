@@ -14,6 +14,7 @@ class UserModel(BaseModel):
     name: Optional[str] = None
     password: Optional[str] = None
     auth_provider: str = "email"
+    aura: int = 0
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
     model_config = {

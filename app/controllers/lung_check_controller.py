@@ -43,23 +43,42 @@ async def create_lung_check(user, data: LungCheckCreateRequest):
         raise HTTPException(status_code=500, detail="Failed to save lung check history.")
 
 # Fetch all lung checks for a user with user info
-async def get_user_lung_checks(user):
+from fastapi import HTTPException
+from datetime import datetime
+from bson import ObjectId
+
+from ..db import lung_check_collection, users_collection
+from ..models.lung_check_model import LungCheckModel
+
+# 🧠 Scrollable Lung Check Fetch
+async def get_user_lung_checks(user, skip: int = 0, limit: int = 7):
     try:
         user_id = str(user["_id"])
+
         doc = await lung_check_collection.find_one({"user_id": user_id})
+        if not doc or "lung_check_history" not in doc:
+            raise HTTPException(status_code=404, detail="No lung check history found.")
 
-        if not doc:
-            raise HTTPException(status_code=404, detail="No lung check data found.")
+        all_entries = doc["lung_check_history"]
 
-        doc["id"] = str(doc["_id"])
-        doc["user"] = {
-            "id": str(user["_id"]),
-            "email": user.get("email"),
-            "name": user.get("name")
+        # Sort entries by timestamp descending
+        sorted_entries = sorted(all_entries, key=lambda x: x["timestamp"], reverse=True)
+
+        # Apply pagination
+        paginated_entries = sorted_entries[skip:skip + limit]
+
+        return {
+            "user": {
+                "id": str(user["_id"]),
+                "name": user.get("name"),
+                "email": user.get("email")
+            },
+            "count": len(all_entries),
+            "skip": skip,
+            "limit": limit,
+            "lung_check_history": paginated_entries
         }
 
-        return doc
-
     except Exception as e:
-        print("❌ Error fetching lung check:", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        print("❌ Error fetching lung check history:", e)
+        raise HTTPException(status_code=500, detail="Failed to fetch lung check data.")

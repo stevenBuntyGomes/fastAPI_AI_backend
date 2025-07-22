@@ -25,3 +25,5 @@ class LungCheckResponse(BaseModel):
     user_id: PyObjectId
     lung_check_history: List[LungCheckEntry]
     created_at: datetime
+    skip: int = 0
+    limit: int = 7
