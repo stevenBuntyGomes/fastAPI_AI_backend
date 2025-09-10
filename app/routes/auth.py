@@ -1,15 +1,24 @@
+# app/routes/auth.py
 from fastapi import APIRouter, Body
 from pydantic import EmailStr
 from typing import Optional
 
-from ..schemas.onboarding_schema import OnboardingRequest
 from ..controllers.auth_controller import (
     send_verification_code,
     verify_email_and_register,
     login_with_email_password,
     login_with_google,
     login_with_apple,
+    fetch_onboarding_by_id,
 )
+from ..schemas.auth_schema import (
+    RegisterRequest,
+    LoginRequest,
+    GoogleLoginRequest,
+    AppleLoginRequest,
+    AuthResponse,
+)
+from ..schemas.onboarding_schema import OnboardingOut
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
@@ -20,40 +29,37 @@ async def send_code(email: EmailStr = Body(..., embed=True)):
     return await send_verification_code(email)
 
 
-# ✅ Step 2: Verify code and register user (with onboarding)
-@router.post("/register", summary="Register user after verifying email")
-async def register_user(
-    email: EmailStr = Body(...),
-    code: str = Body(...),
-    name: str = Body(...),
-    password: str = Body(...),
-    onboarding: OnboardingRequest = Body(...)
-):
-    return await verify_email_and_register(email, code, name, password, onboarding)
+# ✅ Step 2: Verify code and register user (requires onboarding_id)
+@router.post("/register", response_model=AuthResponse, summary="Register user after verifying email")
+async def register_user(payload: RegisterRequest):
+    return await verify_email_and_register(
+        email=payload.email,
+        code=payload.code,
+        name=payload.name,
+        password=payload.password,
+        onboarding_id=payload.onboarding_id,
+    )
 
 
 # ✅ Step 3: Login with email & password
-@router.post("/login", summary="Login with email and password")
-async def login_user(
-    email: EmailStr = Body(...),
-    password: str = Body(...)
-):
-    return await login_with_email_password(email, password)
+@router.post("/login", response_model=AuthResponse, summary="Login with email and password")
+async def login_user(payload: LoginRequest):
+    return await login_with_email_password(payload.email, payload.password)
 
 
-# ✅ Step 4: Login with Google OAuth (optional onboarding for first-time users)
-@router.post("/google", summary="Login with Google")
-async def google_login(
-    token_id: str = Body(..., embed=True),
-    onboarding: Optional[OnboardingRequest] = Body(None)
-):
-    return await login_with_google(token_id, onboarding)
+# ✅ Step 4: Login with Google OAuth (optional onboarding_id for first-time users)
+@router.post("/google", response_model=AuthResponse, summary="Login with Google")
+async def google_login(payload: GoogleLoginRequest):
+    return await login_with_google(payload.token_id, payload.onboarding_id)
 
 
-# ✅ Step 5: Login with Apple OAuth (optional onboarding for first-time users)
-@router.post("/apple", summary="Login with Apple")
-async def apple_login(
-    identity_token: str = Body(..., embed=True),
-    onboarding: Optional[OnboardingRequest] = Body(None)
-):
-    return await login_with_apple(identity_token, onboarding)
+# ✅ Step 5: Login with Apple OAuth (optional onboarding_id for first-time users)
+@router.post("/apple", response_model=AuthResponse, summary="Login with Apple")
+async def apple_login(payload: AppleLoginRequest):
+    return await login_with_apple(payload.identity_token, payload.onboarding_id)
+
+
+# ✅ Convenience: fetch onboarding by onboarding_id (auth namespace)
+@router.get("/onboarding/{onboarding_id}", response_model=OnboardingOut, summary="Get onboarding by id")
+async def get_onboarding_via_auth(onboarding_id: str):
+    return await fetch_onboarding_by_id(onboarding_id)

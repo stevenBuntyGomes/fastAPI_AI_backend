@@ -10,6 +10,7 @@ from app.routes.community import router as community_router
 from app.routes.friend import router as friend_router
 from app.routes.mypod_routes import router as mypod_router
 from app.routes.milestone import router as milestone_router
+from app.routes.onboarding import router as onboarding_router
 
 app = FastAPI(title="Voice AI Backend", version="1.0.0")
 
@@ -38,6 +39,7 @@ def root():
 # ✅ Include API routers
 app.include_router(chat_router)
 app.include_router(auth_router)
+app.include_router(onboarding_router)
 app.include_router(progress_router)
 app.include_router(lung_check_router)
 app.include_router(lung_relining_router)
