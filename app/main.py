@@ -17,10 +17,11 @@ app = FastAPI(title="Voice AI Backend", version="1.0.0")
 # ✅ CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",                     # Local dev
-        "https://fast-api-frontend-ts.vercel.app",   # Vercel production frontend
-    ],
+    # allow_origins=[
+    #     "http://localhost:3000",                     # Local dev
+    #     "https://fast-api-frontend-ts.vercel.app",   # Vercel production frontend
+    # ],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
