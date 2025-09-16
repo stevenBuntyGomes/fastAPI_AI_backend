@@ -166,12 +166,25 @@ async def login_with_google(token_id: str, onboarding_id: Optional[str] = None) 
 # STEP 5: Login with Apple OAuth (optional onboarding_id)
 #  - Returns token + user info
 # -----------------------
+# -----------------------
+# STEP 5: Login with Apple OAuth (optional onboarding_id)
+#  - Returns token + user info
+# -----------------------
 async def login_with_apple(identity_token: str, onboarding_id: Optional[str] = None) -> AuthResponse:
     payload = verify_apple_token(identity_token)
     if not payload:
         raise HTTPException(status_code=401, detail="❌ Invalid Apple token.")
 
-    email = payload["email"]
+    email = payload.get("email")
+    if not email:
+        # Apple may omit email after the very first sign-in (or if user hid it).
+        # Fail fast so the client can request 'email' scope on first login, or provide email another way.
+        raise HTTPException(
+            status_code=400,
+            detail="Apple token is valid but did not include an email. "
+                   "Request the 'email' scope on the first Apple sign-in and send that token to the backend."
+        )
+
     name = payload.get("name", "Apple User")
 
     user = await users_collection.find_one({"email": email})
@@ -195,7 +208,6 @@ async def login_with_apple(identity_token: str, onboarding_id: Optional[str] = N
         })
         user = {"_id": result.inserted_id, "email": email, "name": name, "aura": 0, "onboarding_id": ob_obj}
     else:
-        # Attach onboarding_id if provided and not already set
         if onboarding_id and not user.get("onboarding_id"):
             try:
                 ob_obj = ObjectId(onboarding_id)
