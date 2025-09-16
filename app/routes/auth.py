@@ -9,7 +9,8 @@ from ..controllers.auth_controller import (
     login_with_google,
     login_with_apple,
     fetch_onboarding_by_id,
-    get_authenticated_user,  # NEW
+    get_authenticated_user,
+      add_aura_points,  # NEW
 )
 from ..schemas.auth_schema import (
     RegisterRequest,
@@ -17,10 +18,13 @@ from ..schemas.auth_schema import (
     GoogleLoginRequest,
     AppleLoginRequest,
     AuthResponse,
-    UserOut,  # for /auth/me
+    UserOut,
+      AddAuraRequest,
+        AuraUpdateResponse,  # for /auth/me
 )
 from ..schemas.onboarding_schema import OnboardingOut
 from ..utils.auth_utils import get_current_user  # 🔐 token auth dependency
+
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
@@ -65,3 +69,8 @@ async def get_onboarding_via_auth(onboarding_id: str):
 async def get_me(current_user: dict = Depends(get_current_user)):
     # current_user is injected by token auth; map it to UserOut via controller
     return await get_authenticated_user(current_user)
+
+# ✅ Add aura points to the authenticated user
+@router.post("/aura/add", response_model=AuraUpdateResponse, summary="Increment authenticated user's aura")
+async def add_aura(payload: AddAuraRequest, current_user: dict = Depends(get_current_user)):
+    return await add_aura_points(current_user, payload.points)

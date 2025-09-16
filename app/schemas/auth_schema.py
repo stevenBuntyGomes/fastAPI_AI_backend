@@ -42,3 +42,15 @@ class UserOut(BaseModel):
 class AuthResponse(BaseModel):
     token: str
     user: UserOut
+
+
+
+# ✅ New request for adding aura
+class AddAuraRequest(BaseModel):
+    points: int  # number of points to add (must be > 0)
+
+# ✅ New response for updated aura + user
+class AuraUpdateResponse(BaseModel):
+    message: Optional[str] = None
+    aura: int
+    user: UserOut

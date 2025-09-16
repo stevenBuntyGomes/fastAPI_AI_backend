@@ -281,3 +281,44 @@ async def get_authenticated_user(current_user: dict) -> UserOut:
         aura=current_user.get("aura", 0),
         onboarding_id=str(current_user.get("onboarding_id")) if current_user.get("onboarding_id") else None,
     )
+
+
+# ✅ Add aura to the currently authenticated user
+async def add_aura_points(current_user: dict, points: int):
+    """
+    Increments the authenticated user's 'aura' by `points`.
+    - points must be a positive integer
+    - returns the updated user info + current aura
+    """
+    if not isinstance(points, int) or points <= 0:
+        raise HTTPException(status_code=400, detail="points must be a positive integer")
+
+    user_id = current_user.get("_id")
+    if not user_id:
+        # Shouldn't happen because get_current_user enforces auth,
+        # but we’ll be safe.
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    # Increment aura
+    await users_collection.update_one(
+        {"_id": user_id},
+        {
+            {"$inc": {"aura": points}},
+            {"$set": {"updated_at": datetime.utcnow()}},
+        } if False else {"$inc": {"aura": points}, "$set": {"updated_at": datetime.utcnow()}}
+    )
+
+    # Fetch updated doc
+    updated = await users_collection.find_one({"_id": user_id})
+    if not updated:
+        raise HTTPException(status_code=404, detail="User not found after update")
+
+    # Map to UserOut (same style as your other endpoints)
+    user_out = UserOut(
+        id=str(updated["_id"]),
+        email=updated.get("email"),
+        name=updated.get("name"),
+        aura=updated.get("aura", 0),
+        onboarding_id=str(updated.get("onboarding_id")) if updated.get("onboarding_id") else None,
+    )
+    return {"message": "✅ Aura updated", "aura": user_out.aura, "user": user_out}
