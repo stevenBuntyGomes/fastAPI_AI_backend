@@ -1,4 +1,5 @@
 # app/routes/auth.py
+from typing import List  # ← NEW
 from fastapi import APIRouter, Body, Depends
 from pydantic import EmailStr
 
@@ -10,7 +11,8 @@ from ..controllers.auth_controller import (
     login_with_apple,
     fetch_onboarding_by_id,
     get_authenticated_user,
-      add_aura_points,  # NEW
+    add_aura_points,
+    search_users_by_name,  # ← NEW
 )
 from ..schemas.auth_schema import (
     RegisterRequest,
@@ -19,21 +21,18 @@ from ..schemas.auth_schema import (
     AppleLoginRequest,
     AuthResponse,
     UserOut,
-      AddAuraRequest,
-        AuraUpdateResponse,  # for /auth/me
+    AddAuraRequest,
+    AuraUpdateResponse,
 )
 from ..schemas.onboarding_schema import OnboardingOut
-from ..utils.auth_utils import get_current_user  # 🔐 token auth dependency
-
+from ..utils.auth_utils import get_current_user
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
-# ✅ Step 1: Send verification code to email
 @router.post("/send-code", summary="Send email verification code")
 async def send_code(email: EmailStr = Body(..., embed=True)):
     return await send_verification_code(email)
 
-# ✅ Step 2: Verify code and register user (requires onboarding_id)
 @router.post("/register", response_model=AuthResponse, summary="Register user after verifying email")
 async def register_user(payload: RegisterRequest):
     return await verify_email_and_register(
@@ -44,33 +43,41 @@ async def register_user(payload: RegisterRequest):
         onboarding_id=payload.onboarding_id,
     )
 
-# ✅ Step 3: Login with email & password (returns token + user info)
 @router.post("/login", response_model=AuthResponse, summary="Login with email and password")
 async def login_user(payload: LoginRequest):
     return await login_with_email_password(payload.email, payload.password)
 
-# ✅ Step 4: Login with Google OAuth (optional onboarding_id for first-time users)
 @router.post("/google", response_model=AuthResponse, summary="Login with Google")
 async def google_login(payload: GoogleLoginRequest):
     return await login_with_google(payload.token_id, payload.onboarding_id)
 
-# ✅ Step 5: Login with Apple OAuth (optional onboarding_id for first-time users)
 @router.post("/apple", response_model=AuthResponse, summary="Login with Apple")
 async def apple_login(payload: AppleLoginRequest):
     return await login_with_apple(payload.identity_token, payload.onboarding_id)
 
-# ✅ Convenience: fetch onboarding by onboarding_id (auth namespace)
 @router.get("/onboarding/{onboarding_id}", response_model=OnboardingOut, summary="Get onboarding by id")
 async def get_onboarding_via_auth(onboarding_id: str):
     return await fetch_onboarding_by_id(onboarding_id)
 
-# ✅ NEW: Get the authenticated user (requires Bearer token)
 @router.get("/me", response_model=UserOut, summary="Get authenticated user")
 async def get_me(current_user: dict = Depends(get_current_user)):
-    # current_user is injected by token auth; map it to UserOut via controller
     return await get_authenticated_user(current_user)
 
-# ✅ Add aura points to the authenticated user
 @router.post("/aura/add", response_model=AuraUpdateResponse, summary="Increment authenticated user's aura")
 async def add_aura(payload: AddAuraRequest, current_user: dict = Depends(get_current_user)):
     return await add_aura_points(current_user, payload.points)
+
+# ------------- NEW: Search users by name -------------
+@router.get("/users/search", response_model=List[UserOut], summary="Search users by name")
+async def search_users(
+    q: str,
+    limit: int = 20,
+    skip: int = 0,
+    exclude_self: bool = True,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Case-insensitive substring search on `name`.
+    Example: /auth/users/search?q=ali&limit=10
+    """
+    return await search_users_by_name(q=q, limit=limit, skip=skip, exclude_self=exclude_self, current_user=current_user)

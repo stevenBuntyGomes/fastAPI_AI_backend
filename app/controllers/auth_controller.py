@@ -1,10 +1,11 @@
 # app/controllers/auth_controller.py
-from typing import Optional
+from typing import Optional, List
 from fastapi import HTTPException, status
 from pydantic import EmailStr
 from datetime import datetime, timedelta
 from bson import ObjectId
 import random
+import re  # ← NEW
 
 from ..models.auth import UserModel
 from ..db.mongo import (
@@ -31,7 +32,6 @@ async def send_verification_code(email: EmailStr):
     await send_email_verification_code(email, code)
     return {"message": "📧 Verification code sent."}
 
-
 # -----------------------
 # STEP 2: Register (with onboarding_id provided by frontend)
 # -----------------------
@@ -40,9 +40,8 @@ async def verify_email_and_register(
     code: str,
     name: str,
     password: str,
-    onboarding_id: str,  # only the id, not the whole onboarding payload
+    onboarding_id: str,
 ) -> AuthResponse:
-    # ✅ Validate code
     record = await verification_codes_collection.find_one({"email": email})
     if not record or record["code"] != code:
         raise HTTPException(status_code=400, detail="❌ Invalid or expired code.")
@@ -51,17 +50,14 @@ async def verify_email_and_register(
     if await users_collection.find_one({"email": email}):
         raise HTTPException(status_code=400, detail="⚠️ User already exists.")
 
-    # ✅ Validate onboarding_id exists
     try:
         ob_id = ObjectId(onboarding_id)
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid onboarding_id format")
-
     onboarding_doc = await onboarding_collection.find_one({"_id": ob_id})
     if not onboarding_doc:
         raise HTTPException(status_code=400, detail="onboarding_id does not exist")
 
-    # ✅ Create user (store onboarding_id on user)
     hashed_pw = hash_password(password)
     result = await users_collection.insert_one({
         "email": email,
@@ -85,10 +81,8 @@ async def verify_email_and_register(
     token = create_jwt_token({"user_id": str(result.inserted_id)})
     return AuthResponse(token=token, user=user_out)
 
-
 # -----------------------
 # STEP 3: Login with email & password
-#  - Returns token + user info
 # -----------------------
 async def login_with_email_password(email: EmailStr, password: str) -> AuthResponse:
     user_dict = await users_collection.find_one({"email": email})
@@ -106,10 +100,8 @@ async def login_with_email_password(email: EmailStr, password: str) -> AuthRespo
     token = create_jwt_token({"user_id": str(user.id)})
     return AuthResponse(token=token, user=user_out)
 
-
 # -----------------------
-# STEP 4: Login with Google OAuth (optional onboarding_id)
-#  - Returns token + user info
+# STEP 4: Login with Google OAuth
 # -----------------------
 async def login_with_google(token_id: str, onboarding_id: Optional[str] = None) -> AuthResponse:
     payload = verify_google_token(token_id)
@@ -140,7 +132,6 @@ async def login_with_google(token_id: str, onboarding_id: Optional[str] = None) 
         })
         user = {"_id": result.inserted_id, "email": email, "name": name, "aura": 0, "onboarding_id": ob_obj}
     else:
-        # Attach onboarding_id if provided and not already set
         if onboarding_id and not user.get("onboarding_id"):
             try:
                 ob_obj = ObjectId(onboarding_id)
@@ -161,14 +152,8 @@ async def login_with_google(token_id: str, onboarding_id: Optional[str] = None) 
     )
     return AuthResponse(token=token, user=user_out)
 
-
 # -----------------------
-# STEP 5: Login with Apple OAuth (optional onboarding_id)
-#  - Returns token + user info
-# -----------------------
-# -----------------------
-# STEP 5: Login with Apple OAuth (optional onboarding_id)
-#  - Returns token + user info
+# STEP 5: Login with Apple OAuth
 # -----------------------
 async def login_with_apple(identity_token: str, onboarding_id: Optional[str] = None) -> AuthResponse:
     payload = verify_apple_token(identity_token)
@@ -177,8 +162,6 @@ async def login_with_apple(identity_token: str, onboarding_id: Optional[str] = N
 
     email = payload.get("email")
     if not email:
-        # Apple may omit email after the very first sign-in (or if user hid it).
-        # Fail fast so the client can request 'email' scope on first login, or provide email another way.
         raise HTTPException(
             status_code=400,
             detail="Apple token is valid but did not include an email. "
@@ -228,7 +211,6 @@ async def login_with_apple(identity_token: str, onboarding_id: Optional[str] = N
     )
     return AuthResponse(token=token, user=user_out)
 
-
 # -----------------------
 # Optional helper: fetch onboarding by onboarding_id (auth convenience)
 # -----------------------
@@ -265,15 +247,10 @@ async def fetch_onboarding_by_id(onboarding_id: str) -> OnboardingOut:
         updated_at=model.updated_at,
     )
 
-
 # -----------------------
 # NEW: Get the authenticated user (for /auth/me)
 # -----------------------
 async def get_authenticated_user(current_user: dict) -> UserOut:
-    """
-    Returns the authenticated user's information mapped to UserOut.
-    Assumes `current_user` was injected by Depends(get_current_user) and is a Mongo user dict.
-    """
     return UserOut(
         id=str(current_user.get("_id")) if current_user.get("_id") else None,
         email=current_user.get("email"),
@@ -282,38 +259,24 @@ async def get_authenticated_user(current_user: dict) -> UserOut:
         onboarding_id=str(current_user.get("onboarding_id")) if current_user.get("onboarding_id") else None,
     )
 
-
 # ✅ Add aura to the currently authenticated user
 async def add_aura_points(current_user: dict, points: int):
-    """
-    Increments the authenticated user's 'aura' by `points`.
-    - points must be a positive integer
-    - returns the updated user info + current aura
-    """
     if not isinstance(points, int) or points <= 0:
         raise HTTPException(status_code=400, detail="points must be a positive integer")
 
     user_id = current_user.get("_id")
     if not user_id:
-        # Shouldn't happen because get_current_user enforces auth,
-        # but we’ll be safe.
         raise HTTPException(status_code=401, detail="Unauthorized")
 
-    # Increment aura
     await users_collection.update_one(
         {"_id": user_id},
-        {
-            {"$inc": {"aura": points}},
-            {"$set": {"updated_at": datetime.utcnow()}},
-        } if False else {"$inc": {"aura": points}, "$set": {"updated_at": datetime.utcnow()}}
+        {"$inc": {"aura": points}, "$set": {"updated_at": datetime.utcnow()}}
     )
 
-    # Fetch updated doc
     updated = await users_collection.find_one({"_id": user_id})
     if not updated:
         raise HTTPException(status_code=404, detail="User not found after update")
 
-    # Map to UserOut (same style as your other endpoints)
     user_out = UserOut(
         id=str(updated["_id"]),
         email=updated.get("email"),
@@ -322,3 +285,50 @@ async def add_aura_points(current_user: dict, points: int):
         onboarding_id=str(updated.get("onboarding_id")) if updated.get("onboarding_id") else None,
     )
     return {"message": "✅ Aura updated", "aura": user_out.aura, "user": user_out}
+
+# -----------------------
+# NEW: Search users by name (substring, case-insensitive)
+# -----------------------
+async def search_users_by_name(
+    q: str,
+    limit: int = 20,
+    skip: int = 0,
+    exclude_self: bool = True,
+    current_user: Optional[dict] = None,
+) -> List[UserOut]:
+    """
+    Search users by `name` (case-insensitive substring).
+    - `exclude_self`: True to omit the caller from results.
+    - `limit`: capped to 50 for safety.
+    """
+    if not q or not q.strip():
+        raise HTTPException(status_code=400, detail="Query `q` is required.")
+
+    q = q.strip()
+    limit = max(1, min(limit, 50))
+    skip = max(0, skip)
+
+    # Build Mongo query
+    regex = {"$regex": re.escape(q), "$options": "i"}
+    query = {"name": regex}
+
+    if exclude_self and current_user and current_user.get("_id"):
+        query["_id"] = {"$ne": current_user["_id"]}
+
+    # Project only safe fields
+    projection = {"email": 1, "name": 1, "aura": 1, "onboarding_id": 1}
+
+    cursor = users_collection.find(query, projection).sort("name", 1).skip(skip).limit(limit)
+    results: List[UserOut] = []
+    async for doc in cursor:
+        results.append(
+            UserOut(
+                id=str(doc["_id"]),
+                email=doc.get("email"),
+                name=doc.get("name"),
+                aura=int(doc.get("aura", 0)),
+                onboarding_id=str(doc.get("onboarding_id")) if doc.get("onboarding_id") else None,
+            )
+        )
+
+    return results
