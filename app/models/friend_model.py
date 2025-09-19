@@ -14,7 +14,6 @@ class BackupRequest(BaseModel):
     message: Optional[str] = None
     timestamp: datetime = Field(default_factory=datetime.utcnow)
 
-
 class CheckInNudge(BaseModel):
     message: Optional[str] = None
     timestamp: datetime = Field(default_factory=datetime.utcnow)

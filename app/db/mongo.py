@@ -14,6 +14,9 @@ db = client.voice_ai
 
 # Collections
 users_collection = db["users"]
+socket_sessions_collection = db["socket_sessions"]
+devices_collection = db["devices"]                   # apns_token per user/platform
+bumps_collection = db["bumps"]                       # persisted bump history
 verification_codes_collection = db["codes"]
 memory_collection = db["memory"]
 progress_collection = db["progress"]
@@ -30,6 +33,15 @@ mypod_collection = db["mypods"]
 async def init_db_indexes() -> None:
     # Users: unique email
     await users_collection.create_index("email", unique=True)
+    # Map user -> sockets quickly
+    await socket_sessions_collection.create_index([("user_id", 1)])
+    await socket_sessions_collection.create_index([("sid", 1)], unique=True)
+
+    await devices_collection.create_index([("user_id", 1), ("platform", 1)], unique=True)
+    await devices_collection.create_index("updated_at")
+
+    await bumps_collection.create_index([("to_user_id", 1), ("created_at", -1)])
+    await bumps_collection.create_index([("from_user_id", 1), ("created_at", -1)])
 
     # Verification codes: one code per email, auto-expire at 'expires'
     await verification_codes_collection.create_index("email", unique=True)
