@@ -10,7 +10,7 @@ class OnboardingRequest(BaseModel):
     vaping_frequency: Optional[Literal["never", "occasionally", "daily"]] = None
     vaping_trigger: Optional[str] = None  # Example: "after meals", "before sleep"
     vaping_effect: Optional[str] = None   # Example: "relaxed", "focused", "numb"
-    hides_vaping: Optional[Literal["yes", "no", "sometimes"]] = None
+    hides_vaping: Optional[Literal["Always", "Sometimes", "Rarely", "Never", "always", "sometimes", "rarely", "never"]] = None
 
     # Integer-based exposure and cost tracking
     vaping_years: Optional[int] = None
