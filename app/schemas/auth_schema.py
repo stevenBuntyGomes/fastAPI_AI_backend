@@ -38,13 +38,20 @@ class UserOut(BaseModel):
     email: EmailStr
     name: Optional[str]
     aura: int = 0
+    login_streak: int = 0
     onboarding_id: Optional[PyObjectId] = None  # ← include onboarding_id in responses
 
 class AuthResponse(BaseModel):
     token: str
     user: UserOut
 
+class LoginStreakSetRequest(BaseModel):
+    login_streak: int  # send days_tracked.length from frontend (must be >= 0)
 
+class LoginStreakUpdateResponse(BaseModel):
+    message: Optional[str] = None
+    login_streak: int
+    user: UserOut
 
 # ✅ New request for adding aura
 class AddAuraRequest(BaseModel):

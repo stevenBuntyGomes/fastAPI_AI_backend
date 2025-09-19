@@ -1,5 +1,5 @@
 # app/controllers/auth_controller.py
-from typing import Optional, List
+from typing import Optional, List, Dict
 from fastapi import HTTPException, status
 from pydantic import EmailStr
 from datetime import datetime, timedelta
@@ -370,3 +370,66 @@ async def search_users_by_name(
         )
 
     return results
+
+
+async def _compute_login_streak_from_progress(user_id_str: str) -> int:
+    """
+    Count DISTINCT calendar days in progress.days_tracked for this user.
+    Accepts both datetime objects and ISO strings in the array.
+    """
+    progress = await progress_collection.find_one({"user_id": user_id_str}, {"days_tracked": 1})
+    if not progress or not progress.get("days_tracked"):
+        return 0
+
+    unique_days = set()
+    for entry in progress["days_tracked"]:
+        if isinstance(entry, datetime):
+            d = entry.date()
+        else:
+            # try parse ISO string → date
+            try:
+                d = datetime.fromisoformat(str(entry)).date()
+            except Exception:
+                # skip bad entries rather than failing the request
+                continue
+        unique_days.add(d)
+
+    return len(unique_days)
+
+
+
+# ✅ Set login_streak to an exact value (sent from frontend)
+async def set_login_streak(current_user: dict, login_streak: int):
+    """
+    Sets the user's login_streak to the provided integer.
+    You compute days_tracked.length on the frontend and send it here.
+    """
+    if not isinstance(login_streak, int) or login_streak < 0:
+        raise HTTPException(status_code=400, detail="login_streak must be a non-negative integer")
+
+    user_id = current_user.get("_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    # Update the user
+    await users_collection.update_one(
+        {"_id": user_id},
+        {"$set": {"login_streak": login_streak, "updated_at": datetime.utcnow()}}
+    )
+
+    # Read back the full user
+    updated = await users_collection.find_one({"_id": user_id})
+    if not updated:
+        raise HTTPException(status_code=404, detail="User not found after update")
+
+    # Normalize response
+    user_out = UserOut(
+        id=str(updated["_id"]),
+        email=updated.get("email"),
+        name=updated.get("name"),
+        aura=int(updated.get("aura", 0)),
+        login_streak=int(updated.get("login_streak", 0)),   # ← includes your new value
+        onboarding_id=str(updated.get("onboarding_id")) if updated.get("onboarding_id") else None,
+    )
+
+    return {"message": "✅ Login streak set", "login_streak": user_out.login_streak, "user": user_out}
