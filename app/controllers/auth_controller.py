@@ -259,6 +259,43 @@ async def get_authenticated_user(current_user: dict) -> UserOut:
         onboarding_id=str(current_user.get("onboarding_id")) if current_user.get("onboarding_id") else None,
     )
 
+# -----------------------
+# NEW: Get a user by id (for iOS: supply user_id, get full user info)
+# -----------------------
+async def get_user_by_id(user_id: str) -> UserOut:
+    # 1) Validate ObjectId
+    try:
+        obj_id = ObjectId(user_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid user_id format")
+
+    # 2) Fetch with a safe projection (only fields your app needs)
+    projection = {
+        "email": 1,
+        "name": 1,
+        "aura": 1,
+        "login_streak": 1,          # ← include streak
+        "onboarding_id": 1,
+        "created_at": 1,
+        "apns_token": 1,            # optional: surface if you want
+        "socket_ids": 1,            # optional: surface if you want
+    }
+    doc = await users_collection.find_one({"_id": obj_id}, projection)
+
+    if not doc:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # 3) Normalize as UserOut (defaults handle missing fields)
+    return UserOut(
+        id=str(doc["_id"]),
+        email=doc.get("email"),
+        name=doc.get("name"),
+        aura=int(doc.get("aura", 0)),
+        login_streak=int(doc.get("login_streak", 0)),
+        onboarding_id=str(doc.get("onboarding_id")) if doc.get("onboarding_id") else None,
+    )
+
+
 # ✅ Add aura to the currently authenticated user
 async def add_aura_points(current_user: dict, points: int):
     if not isinstance(points, int) or points <= 0:
@@ -282,6 +319,7 @@ async def add_aura_points(current_user: dict, points: int):
         email=updated.get("email"),
         name=updated.get("name"),
         aura=updated.get("aura", 0),
+        login_streak=int(updated.get("login_streak", 0)),
         onboarding_id=str(updated.get("onboarding_id")) if updated.get("onboarding_id") else None,
     )
     return {"message": "✅ Aura updated", "aura": user_out.aura, "user": user_out}

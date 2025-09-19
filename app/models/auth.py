@@ -16,6 +16,7 @@ class UserModel(BaseModel):
     password: Optional[str] = None
     auth_provider: str = "email"
     aura: int = 0
+    login_streak: int = 0
     onboarding_id: Optional[PyObjectId] = None  # ← NEW: store onboarding_id on the user
     created_at: datetime = Field(default_factory=datetime.utcnow)
     # NEW (optional but handy)

@@ -11,6 +11,7 @@ from ..controllers.auth_controller import (
     login_with_apple,
     fetch_onboarding_by_id,
     get_authenticated_user,
+    get_user_by_id,
     add_aura_points,
     search_users_by_name,  # ← NEW
 )
@@ -81,3 +82,13 @@ async def search_users(
     Example: /auth/users/search?q=ali&limit=10
     """
     return await search_users_by_name(q=q, limit=limit, skip=skip, exclude_self=exclude_self, current_user=current_user)
+
+
+# ------------- NEW: Get user by id -------------
+@router.get("/user/{user_id}", response_model=UserOut, summary="Get a user by id")
+async def get_user(user_id: str, current_user: dict = Depends(get_current_user)):
+    """
+    Returns a normalized user document for the given `user_id`.
+    Requires authentication but does not restrict to self.
+    """
+    return await get_user_by_id(user_id)

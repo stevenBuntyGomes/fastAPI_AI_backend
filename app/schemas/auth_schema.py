@@ -16,6 +16,7 @@ class RegisterRequest(BaseModel):
     code: str
     name: str
     password: str
+    login_streak: int = 0
     onboarding_id: str  # ← NEW: frontend sends onboarding_id created earlier
 
 class LoginRequest(BaseModel):
