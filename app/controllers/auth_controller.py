@@ -12,6 +12,8 @@ from ..db.mongo import (
     users_collection,
     verification_codes_collection,
     onboarding_collection,
+    progress_collection,  
+    recovery_collection,   
 )
 from ..utils.jwt_utils import create_jwt_token
 from ..utils.hashing import hash_password, verify_password
@@ -433,3 +435,35 @@ async def set_login_streak(current_user: dict, login_streak: int):
     )
 
     return {"message": "✅ Login streak set", "login_streak": user_out.login_streak, "user": user_out}
+
+
+# -----------------------
+# Delete Account (hard delete)
+# -----------------------
+async def delete_account(user_id: str):
+    """
+    Hard-deletes the user's account and related data we own:
+      - recovery_collection (by user_id)
+      - progress_collection (by user_id)
+      - users_collection (by _id)
+    Returns a simple message and the deleted user id.
+    """
+    # Validate ObjectId
+    try:
+        oid = ObjectId(user_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid user_id format")
+
+    # Delete related docs first (idempotent)
+    await recovery_collection.delete_many({"user_id": user_id})
+    await progress_collection.delete_many({"user_id": user_id})
+
+    # Delete the user
+    res = await users_collection.delete_one({"_id": oid})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Optional: clean up verification codes, sessions, etc. (best-effort)
+    await verification_codes_collection.delete_many({"email": {"$exists": True}})
+
+    return {"message": "✅ Account and related data deleted.", "deleted_user_id": str(oid)}

@@ -62,3 +62,9 @@ class AuraUpdateResponse(BaseModel):
     message: Optional[str] = None
     aura: int
     user: UserOut
+
+
+
+class DeleteAccountResponse(BaseModel):
+    message: str
+    deleted_user_id: Optional[PyObjectId] = None

@@ -4,6 +4,7 @@ from datetime import datetime
 
 class RecoveryCreateRequest(BaseModel):
     last_relapse_date: datetime
+    quit_date: Optional[datetime] = None
 
 class UserPreview(BaseModel):
     id: str  # ✅ Removed alias to avoid pydantic mismatch

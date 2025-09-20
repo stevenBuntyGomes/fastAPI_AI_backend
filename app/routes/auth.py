@@ -23,6 +23,7 @@ from ..controllers.auth_controller import (
 
     # Search
     search_users_by_name,
+    delete_account,
 )
 
 from ..schemas.auth_schema import (
@@ -39,6 +40,7 @@ from ..schemas.auth_schema import (
     UserOut,
     AuraUpdateResponse,
     LoginStreakUpdateResponse,
+    DeleteAccountResponse,
 )
 
 from ..schemas.onboarding_schema import OnboardingOut
@@ -174,3 +176,22 @@ async def get_user(user_id: str, current_user: dict = Depends(get_current_user))
     Requires authentication but is not restricted to self.
     """
     return await get_user_by_id(user_id)
+
+
+@router.delete("/me", response_model=DeleteAccountResponse, summary="Delete my account")
+async def delete_my_account(current_user: dict = Depends(get_current_user)):
+    """
+    Permanently delete the authenticated user's account and related data.
+    """
+    user_id = str(current_user["_id"])
+    return await delete_account(user_id)
+
+
+@router.delete("/user/{user_id}", response_model=DeleteAccountResponse, summary="(Admin) Delete a user by id")
+async def delete_user_account(user_id: str, current_user: dict = Depends(get_current_user)):
+    """
+    Admin-only: Permanently delete a specific user's account and related data.
+    """
+    # TODO: enforce admin authorization here
+    return await delete_account(user_id)
+

@@ -1,6 +1,6 @@
 from fastapi import HTTPException
 from bson import ObjectId
-from datetime import datetime
+from datetime import datetime, timezone
 
 from ..db.mongo import progress_collection, users_collection
 from ..models.progress_model import ProgressModel
@@ -8,23 +8,53 @@ from ..schemas.progress_schema import ProgressCreateRequest, ProgressResponse
 from ..models.auth import UserModel
 
 
+# ── helpers: UTC-safe ───────────────────────────────────────────────────────────
+
+def now_utc() -> datetime:
+    return datetime.now(timezone.utc)
+
+def to_utc_aware(dt: datetime | None) -> datetime | None:
+    if dt is None:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
 # ✅ Save Progress (Create or Update)
+# (Your comment says Create or Update; this now truly does both.)
 async def save_user_progress(user_id: str, data: ProgressCreateRequest):
     existing = await progress_collection.find_one({"user_id": user_id})
+
+    last_relapse = to_utc_aware(data.last_relapse_date)
+    # If schema has quit_date, use it; else default to last_relapse
+    quit_date = to_utc_aware(getattr(data, "quit_date", None)) or last_relapse
+
     if existing:
-        raise HTTPException(status_code=400, detail="❌ Progress already exists for this user.")
+        # Update in place (fixes "Update progress not working")
+        await progress_collection.update_one(
+            {"_id": existing["_id"]},
+            {"$set": {
+                "last_relapse_date": last_relapse,
+                "quit_date": quit_date,
+                "days_tracked": data.days_tracked or [],
+                "milestones_unlocked": data.milestones_unlocked or [],
+                "updated_at": now_utc(),
+            }}
+        )
+        return {"message": "✅ Progress updated successfully."}
+    else:
+        # Create new
+        update_data = {
+            "user_id": user_id,
+            "last_relapse_date": last_relapse,
+            "quit_date": quit_date,
+            "days_tracked": data.days_tracked or [],
+            "milestones_unlocked": data.milestones_unlocked or [],
+            "created_at": now_utc(),
+            "updated_at": now_utc(),
+        }
+        await progress_collection.insert_one(update_data)
+        return {"message": "✅ Progress created successfully."}
 
-    update_data = {
-        "user_id": user_id,
-        "last_relapse_date": data.last_relapse_date,
-        "quit_date": data.quit_date,
-        "days_tracked": data.days_tracked or [],
-        "milestones_unlocked": data.milestones_unlocked or [],
-        "created_at": datetime.utcnow(),
-    }
-
-    await progress_collection.insert_one(update_data)
-    return {"message": "✅ Progress created successfully."}
 
 # ✅ Enhanced Progress Fetch with Milestone Calculation
 from ..db.mongo import milestone_collection
@@ -35,9 +65,9 @@ async def get_user_progress(user_id: str) -> ProgressResponse:
     if not progress:
         raise HTTPException(status_code=404, detail="❌ No progress found.")
 
-    # ⏱ Calculate time since last relapse
-    now = datetime.utcnow()
-    relapse_time = progress.get("last_relapse_date") or progress["created_at"]
+    # ⏱ Calculate time since last relapse (UTC-aware)
+    now = now_utc()
+    relapse_time = to_utc_aware(progress.get("last_relapse_date") or progress["created_at"])
     minutes_since = (now - relapse_time).total_seconds() / 60
 
     # 🔐 Fetch milestone definitions
@@ -87,16 +117,17 @@ async def get_user_progress(user_id: str) -> ProgressResponse:
     # ✅ Prepare response
     return ProgressResponse(
         user_id=str(progress["user_id"]),
-        last_relapse_date=progress.get("last_relapse_date"),
-        quit_date=progress.get("quit_date"),
+        last_relapse_date=to_utc_aware(progress.get("last_relapse_date")),
+        quit_date=to_utc_aware(progress.get("quit_date")),
         days_tracked=progress.get("days_tracked", []),
         milestones_unlocked=list(unlocked_names),
-        created_at=progress.get("created_at", now),
+        created_at=to_utc_aware(progress.get("created_at", now)),
         latest_unlocked=latest_unlocked,
         current_in_progress=current_in_progress,
         next_locked=next_locked,
         minutes_since_last_relapse=round(minutes_since, 2)
     )
+
 
 # ✅ Reset Progress (User Failed)
 async def reset_user_progress(user_id: str) -> ProgressResponse:
@@ -104,7 +135,7 @@ async def reset_user_progress(user_id: str) -> ProgressResponse:
     if not user:
         raise HTTPException(status_code=404, detail="❌ User not found.")
 
-    now = datetime.utcnow()
+    now = now_utc()
 
     # Fetch current progress (to preserve milestones + created_at)
     existing_progress = await progress_collection.find_one({"user_id": user_id})
@@ -112,7 +143,7 @@ async def reset_user_progress(user_id: str) -> ProgressResponse:
         raise HTTPException(status_code=404, detail="❌ No progress data to reset.")
 
     milestones = existing_progress.get("milestones_unlocked", [])
-    created_at = existing_progress.get("created_at", now)
+    created_at = to_utc_aware(existing_progress.get("created_at", now))
 
     # Reset progress fields (but NOT created_at)
     reset_data = {
@@ -120,6 +151,8 @@ async def reset_user_progress(user_id: str) -> ProgressResponse:
         "quit_date": now,
         "days_tracked": [],
         "milestones_unlocked": milestones,
+        "created_at": created_at,  # keep original created_at
+        "updated_at": now,
     }
 
     await progress_collection.update_one(
