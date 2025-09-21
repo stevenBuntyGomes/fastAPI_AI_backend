@@ -379,7 +379,7 @@ async def add_aura_points(current_user: dict, points: int):
     return {"message": "✅ Aura updated", "aura": user_out.aura, "user": user_out}
 
 # -----------------------
-# Search users by name (substring, case-insensitive)
+# Search users by name OR exact _id (exclusive modes)
 # -----------------------
 async def search_users_by_name_or_id(
     q: str,
@@ -395,8 +395,8 @@ async def search_users_by_name_or_id(
     limit = max(1, min(limit, 50))
     skip = max(0, skip)
 
-    # normalize current user id (could be str or ObjectId)
-    cur_oid = None
+    # Normalize current user's id (string or ObjectId -> ObjectId)
+    cur_oid: Optional[ObjectId] = None
     try:
         if current_user and current_user.get("_id"):
             cur_oid = ObjectId(str(current_user["_id"]))
@@ -408,6 +408,7 @@ async def search_users_by_name_or_id(
     # --- Mode A: exact _id match ---
     if ObjectId.is_valid(q):
         oid = ObjectId(q)
+        # Respect exclude_self
         if exclude_self and cur_oid and cur_oid == oid:
             return []
         doc = await users_collection.find_one({"_id": oid}, projection)
@@ -426,7 +427,7 @@ async def search_users_by_name_or_id(
 
     # --- Mode B: name substring search (case-insensitive) ---
     name_regex = {"$regex": re.escape(q), "$options": "i"}
-    name_query = {"name": name_regex}
+    name_query: dict = {"name": name_regex}
     if exclude_self and cur_oid:
         name_query["_id"] = {"$ne": cur_oid}
 
@@ -450,6 +451,7 @@ async def search_users_by_name_or_id(
             )
         )
     return results
+
 # -----------------------
 # Utility: compute login streak from progress (distinct days)
 # -----------------------
