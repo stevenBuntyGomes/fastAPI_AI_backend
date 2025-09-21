@@ -1,5 +1,5 @@
 # app/controllers/progress_controller.py
-from typing import Optional
+from typing import Optional, List
 from fastapi import HTTPException
 from bson import ObjectId
 from datetime import datetime, timezone
@@ -11,8 +11,10 @@ from ..schemas.progress_schema import (
     MilestoneStatus,
 )
 
-# ── helpers: UTC-safe ───────────────────────────────────────────────────────────
+# ── config ──────────────────────────────────────────────────────────────────────
+AURA_PER_MILESTONE = 20  # ← award per newly unlocked milestone
 
+# ── helpers: UTC-safe ───────────────────────────────────────────────────────────
 def now_utc() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -27,6 +29,23 @@ def to_utc_aware(dt: Optional[datetime]) -> Optional[datetime]:
         return dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc)
 
+def _as_oid(user_id: str) -> ObjectId:
+    try:
+        return ObjectId(user_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid user_id")
+
+async def _increment_user_aura(user_id: str, points: int) -> None:
+    """
+    Safely increment a user's aura by `points` (positive int). No-op if points <= 0.
+    """
+    if points <= 0:
+        return
+    await users_collection.update_one(
+        {"_id": _as_oid(user_id)},
+        {"$inc": {"aura": points}, "$set": {"updated_at": now_utc()}}
+    )
+
 # ✅ Save Progress (Create or Update)
 async def save_user_progress(user_id: str, data: ProgressCreateRequest):
     existing = await progress_collection.find_one({"user_id": user_id})
@@ -35,27 +54,40 @@ async def save_user_progress(user_id: str, data: ProgressCreateRequest):
     # If schema has quit_date, use it; else default to last_relapse
     quit_date = to_utc_aware(getattr(data, "quit_date", None)) or last_relapse
 
+    # Normalize incoming milestones list (de-dupe, keep order)
+    incoming_unlocked: List[str] = list(dict.fromkeys(data.milestones_unlocked or []))
+
     if existing:
-        # Update in place (fixes "Update progress not working")
+        # Determine which milestones are *newly added* compared to what's already stored
+        previously_unlocked = set(existing.get("milestones_unlocked", []))
+        newly_added = [m for m in incoming_unlocked if m not in previously_unlocked]
+
+        # Update in place
         await progress_collection.update_one(
             {"_id": existing["_id"]},
             {"$set": {
                 "last_relapse_date": last_relapse,
                 "quit_date": quit_date,
                 "days_tracked": data.days_tracked or [],
-                "milestones_unlocked": data.milestones_unlocked or [],
+                "milestones_unlocked": incoming_unlocked,
                 "updated_at": now_utc(),
             }}
         )
+
+        # ⭐ Aura: +20 per newly added milestone (only when values are added)
+        if newly_added:
+            await _increment_user_aura(user_id, AURA_PER_MILESTONE * len(newly_added))
+
         return {"message": "✅ Progress updated successfully."}
+
     else:
-        # Create new
+        # Create new (no aura increment here; nothing was "added" versus prior state)
         doc = {
             "user_id": user_id,
             "last_relapse_date": last_relapse,
             "quit_date": quit_date,
             "days_tracked": data.days_tracked or [],
-            "milestones_unlocked": data.milestones_unlocked or [],
+            "milestones_unlocked": incoming_unlocked,
             "created_at": now_utc(),
             "updated_at": now_utc(),
         }
@@ -82,7 +114,7 @@ async def get_user_progress(user_id: str) -> ProgressResponse:
     latest_unlocked: Optional[MilestoneStatus] = None
     current_in_progress: Optional[MilestoneStatus] = None
     next_locked: Optional[MilestoneStatus] = None
-    newly_unlocked = []
+    newly_unlocked: List[str] = []
 
     for m in milestones:
         name = m["name"]
@@ -111,10 +143,13 @@ async def get_user_progress(user_id: str) -> ProgressResponse:
 
     # ✍️ Update DB if new milestones unlocked
     if newly_unlocked:
+        # Add unique new names to the set in DB
         await progress_collection.update_one(
             {"_id": progress["_id"]},
             {"$addToSet": {"milestones_unlocked": {"$each": newly_unlocked}}}
         )
+        # ⭐ Aura: +20 per *actually* newly unlocked milestone
+        await _increment_user_aura(user_id, AURA_PER_MILESTONE * len(newly_unlocked))
         unlocked_names.update(newly_unlocked)
 
     # ✅ Prepare response
@@ -133,8 +168,9 @@ async def get_user_progress(user_id: str) -> ProgressResponse:
 
 # ✅ Reset Progress (User Failed)
 async def reset_user_progress(user_id: str) -> ProgressResponse:
-    user = await users_collection.find_one({"_id": ObjectId(user_id)})
-    if not user:
+    # Ensure user exists
+    _ = await users_collection.find_one({"_id": _as_oid(user_id)})
+    if not _:
         raise HTTPException(status_code=404, detail="❌ User not found.")
 
     now = now_utc()
@@ -147,7 +183,7 @@ async def reset_user_progress(user_id: str) -> ProgressResponse:
     milestones = existing_progress.get("milestones_unlocked", [])
     created_at = to_utc_aware(existing_progress.get("created_at", now))
 
-    # Reset progress fields (but NOT created_at)
+    # Reset progress fields (but NOT created_at, and no aura changes here)
     reset_data = {
         "last_relapse_date": now,
         "quit_date": now,

@@ -1,6 +1,7 @@
 from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime
+from ._base_datetime import NaiveIsoDatetimeModel
 
 class AuthorPreview(BaseModel):
     id: str
@@ -39,7 +40,7 @@ class UserSocialStatsSchema(BaseModel):
 
 
 # Full Community Schema
-class CommunitySchema(BaseModel):
+class CommunitySchema(NaiveIsoDatetimeModel):
     user_id: str
     posts: List[PostSchema] = []
     user_social_stats: UserSocialStatsSchema = UserSocialStatsSchema()
@@ -57,7 +58,7 @@ class PostCreateRequest(BaseModel):
     post_visibility: str  # e.g., "community" or "friends_only"
 
 
-class PostResponse(BaseModel):
+class PostResponse(NaiveIsoDatetimeModel):
     id: str  # assuming MongoDB ObjectId will be serialized as string
     post_text: str
     post_author_id: str

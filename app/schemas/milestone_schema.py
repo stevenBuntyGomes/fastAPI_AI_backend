@@ -3,8 +3,9 @@
 from pydantic import BaseModel, Field
 from typing import Optional
 from datetime import datetime
+from ._base_datetime import NaiveIsoDatetimeModel
 
-class MilestoneSchema(BaseModel):
+class MilestoneSchema(NaiveIsoDatetimeModel):
     name: str
     description: str
     time_in_minutes: int

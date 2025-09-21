@@ -4,6 +4,7 @@ from datetime import datetime
 from bson import ObjectId
 from typing_extensions import Annotated
 from pydantic.functional_validators import BeforeValidator
+from ._base_datetime import NaiveIsoDatetimeModel
 
 # Convert ObjectId to string for safe serialization
 PyObjectId = Annotated[str, BeforeValidator(lambda x: str(x))]
@@ -49,6 +50,6 @@ class FriendUpdate(BaseModel):
 
 
 # ✅ Response schema
-class FriendResponse(FriendCreate):
+class FriendResponse(FriendCreate, NaiveIsoDatetimeModel):
     id: str
     user_id: str

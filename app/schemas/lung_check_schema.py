@@ -3,7 +3,7 @@ from typing import List
 from datetime import datetime
 from typing_extensions import Annotated
 from pydantic.functional_validators import BeforeValidator
-
+from ._base_datetime import NaiveIsoDatetimeModel
 # MongoDB ObjectId-safe string
 PyObjectId = Annotated[str, BeforeValidator(lambda x: str(x))]
 
@@ -20,7 +20,7 @@ class LungCheckCreateRequest(BaseModel):
 
 
 # 🔹 Response schema with Mongo-style ID
-class LungCheckResponse(BaseModel):
+class LungCheckResponse(NaiveIsoDatetimeModel):
     id: PyObjectId = Field(alias="_id")
     user_id: PyObjectId
     lung_check_history: List[LungCheckEntry]

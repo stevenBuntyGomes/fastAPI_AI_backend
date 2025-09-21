@@ -19,8 +19,10 @@ from app.routes.friend import router as friend_router
 from app.routes.mypod_routes import router as mypod_router
 from app.routes.milestone import router as milestone_router
 from app.routes.onboarding import router as onboarding_router
+
+# ✅ New/updated routes (APNs + Bump)
 from app.routes.devices import router as devices_router
-from app.routes.bump import router as bump_router  # HTTP-triggered bump (optional)
+from app.routes.bump import router as bump_router  # HTTP-triggered bump
 
 # ---------------------------
 # Build FastAPI app
@@ -58,8 +60,10 @@ fastapi_app.include_router(community_router)
 fastapi_app.include_router(friend_router)
 fastapi_app.include_router(mypod_router)
 fastapi_app.include_router(milestone_router)
+
+# ✅ APNs device registration + bump push
 fastapi_app.include_router(devices_router)
-fastapi_app.include_router(bump_router)  # HTTP-triggered bump (optional)
+fastapi_app.include_router(bump_router)
 
 # ---------------------------
 # Startup tasks
@@ -75,7 +79,7 @@ async def on_startup():
 # ---------------------------
 # Mount Socket.IO at locked path (must match iOS client)
 # ---------------------------
-# Example iOS config:
+# Example iOS Socket.IO config:
 #   .path("/socket.io"), .forceWebsockets(true),
 #   .connectParams(["token": "<JWT>"])
 app = socketio.ASGIApp(

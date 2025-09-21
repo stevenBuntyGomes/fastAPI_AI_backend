@@ -3,6 +3,7 @@
 from pydantic import BaseModel, Field
 from typing import Optional, Literal
 from datetime import datetime
+from ._base_datetime import NaiveIsoDatetimeModel
 
 
 class OnboardingRequest(BaseModel):
@@ -35,7 +36,7 @@ class OnboardingResponse(BaseModel):
     onboarding_id: str = Field(..., description="Inserted onboarding document id")
 
 
-class OnboardingOut(BaseModel):
+class OnboardingOut(NaiveIsoDatetimeModel):
     """
     Response returned by GET/PATCH /onboarding/{id}
     """

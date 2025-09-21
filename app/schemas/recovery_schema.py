@@ -1,6 +1,7 @@
 from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime
+from ._base_datetime import NaiveIsoDatetimeModel
 
 class RecoveryCreateRequest(BaseModel):
     last_relapse_date: datetime
@@ -11,7 +12,7 @@ class UserPreview(BaseModel):
     email: str
     name: Optional[str]
 
-class RecoveryResponse(BaseModel):
+class RecoveryResponse(NaiveIsoDatetimeModel):
     last_relapse_date: datetime
     quit_date: datetime
     recovery_percentage: float
