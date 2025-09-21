@@ -156,16 +156,8 @@ async def search_users(
     exclude_self: bool = True,
     current_user: dict = Depends(get_current_user),
 ):
-    """
-    Case-insensitive substring search on `name`, plus an exact match if `q` is a valid ObjectId.
-    Example: /auth/users/search?q=ali&limit=10  or  /auth/users/search?q=66efc7b8e0b6a4a5c2d3f9ab
-    """
     return await search_users_by_name_or_id(
-        q=q,
-        limit=limit,
-        skip=skip,
-        exclude_self=exclude_self,
-        current_user=current_user,
+        q=q, limit=limit, skip=skip, exclude_self=exclude_self, current_user=current_user
     )
 @router.get("/user/{user_id}", response_model=UserOut, summary="Get a user by id")
 async def get_user(user_id: str, current_user: dict = Depends(get_current_user)):
