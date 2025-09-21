@@ -22,7 +22,7 @@ from ..controllers.auth_controller import (
     set_login_streak,
 
     # Search
-    search_users_by_name,
+    search_users_by_name_or_id,
     delete_account,
 )
 
@@ -148,7 +148,7 @@ async def set_login_streak_route(
 # Search & Read
 # -------------
 
-@router.get("/users/search", response_model=List[UserOut], summary="Search users by name")
+@router.get("/users/search", response_model=List[UserOut], summary="Search users by name or exact id")
 async def search_users(
     q: str,
     limit: int = 20,
@@ -157,18 +157,16 @@ async def search_users(
     current_user: dict = Depends(get_current_user),
 ):
     """
-    Case-insensitive substring search on `name`.
-    Example: /auth/users/search?q=ali&limit=10
+    Case-insensitive substring search on `name`, plus an exact match if `q` is a valid ObjectId.
+    Example: /auth/users/search?q=ali&limit=10  or  /auth/users/search?q=66efc7b8e0b6a4a5c2d3f9ab
     """
-    return await search_users_by_name(
+    return await search_users_by_name_or_id(
         q=q,
         limit=limit,
         skip=skip,
         exclude_self=exclude_self,
         current_user=current_user,
     )
-
-
 @router.get("/user/{user_id}", response_model=UserOut, summary="Get a user by id")
 async def get_user(user_id: str, current_user: dict = Depends(get_current_user)):
     """

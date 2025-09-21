@@ -381,7 +381,7 @@ async def add_aura_points(current_user: dict, points: int):
 # -----------------------
 # Search users by name (substring, case-insensitive)
 # -----------------------
-async def search_users_by_name(
+async def search_users_by_name_or_id(
     q: str,
     limit: int = 20,
     skip: int = 0,
@@ -395,30 +395,83 @@ async def search_users_by_name(
     limit = max(1, min(limit, 50))
     skip = max(0, skip)
 
-    regex = {"$regex": re.escape(q), "$options": "i"}
-    query = {"name": regex}
+    projection = {"email": 1, "name": 1, "aura": 1, "onboarding_id": 1, "login_streak": 1}
+
+    results: List[UserOut] = []
+    already_ids = set()
+
+    # 1) If q looks like a valid ObjectId, fetch that user exactly
+    try:
+        from bson import ObjectId as _ObjId  # local alias to be explicit
+        looks_like_oid = _ObjId.is_valid(q)
+    except Exception:
+        looks_like_oid = False
+
+    if looks_like_oid:
+        oid = _ObjId(q)
+        id_query = {"_id": oid}
+        if exclude_self and current_user and current_user.get("_id") == oid:
+            id_doc = None
+        else:
+            id_doc = await users_collection.find_one(id_query, projection)
+
+        if id_doc:
+            results.append(
+                UserOut(
+                    id=str(id_doc["_id"]),
+                    email=id_doc.get("email"),
+                    name=id_doc.get("name"),
+                    aura=int(id_doc.get("aura") or 0),
+                    login_streak=int(id_doc.get("login_streak") or 0),
+                    onboarding_id=str(id_doc.get("onboarding_id")) if id_doc.get("onboarding_id") else None,
+                )
+            )
+            already_ids.add(id_doc["_id"])
+
+    # 2) Name substring search (case-insensitive), excluding any id we already added
+    name_regex = {"$regex": re.escape(q), "$options": "i"}
+    name_query = {"name": name_regex}
 
     if exclude_self and current_user and current_user.get("_id"):
-        query["_id"] = {"$ne": current_user["_id"]}
+        # Avoid comparing str to ObjectId; ensure same type
+        name_query["_id"] = {"$ne": current_user["_id"]}
 
-    projection = {"email": 1, "name": 1, "aura": 1, "onboarding_id": 1}
+    if already_ids:
+        # Exclude the exact id match so we don't duplicate it
+        if "_id" in name_query:
+            # merge with existing condition
+            existing = name_query["_id"]
+            if isinstance(existing, dict) and "$ne" in existing:
+                # {"$ne": current_user_id} -> combine with "$nin"
+                name_query["_id"] = {"$nin": [existing["$ne"], *already_ids]}
+            else:
+                name_query["_id"] = {"$nin": list(already_ids)}
+        else:
+            name_query["_id"] = {"$nin": list(already_ids)}
 
-    cursor = users_collection.find(query, projection).sort("name", 1).skip(skip).limit(limit)
-    results: List[UserOut] = []
-    async for doc in cursor:
-        results.append(
-            UserOut(
-                id=str(doc["_id"]),
-                email=doc.get("email"),
-                name=doc.get("name"),
-                aura=int(doc.get("aura") or 0),
-                login_streak=0,  # intentionally not heavy to fetch here
-                onboarding_id=str(doc.get("onboarding_id")) if doc.get("onboarding_id") else None,
-            )
+    # We honor pagination on the name results; the id hit (if any) is prepended
+    remaining = max(0, limit - len(results))
+    if remaining > 0:
+        cursor = (
+            users_collection.find(name_query, projection)
+            .sort("name", 1)
+            .skip(skip)
+            .limit(remaining)
         )
+        async for doc in cursor:
+            results.append(
+                UserOut(
+                    id=str(doc["_id"]),
+                    email=doc.get("email"),
+                    name=doc.get("name"),
+                    aura=int(doc.get("aura") or 0),
+                    # keep this lightweight like before; login_streak included if projected
+                    login_streak=int(doc.get("login_streak") or 0) if "login_streak" in projection else 0,
+                    onboarding_id=str(doc.get("onboarding_id")) if doc.get("onboarding_id") else None,
+                )
+            )
 
     return results
-
 # -----------------------
 # Utility: compute login streak from progress (distinct days)
 # -----------------------
