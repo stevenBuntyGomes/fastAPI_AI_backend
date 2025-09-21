@@ -1,26 +1,33 @@
+# app/controllers/progress_controller.py
+from typing import Optional
 from fastapi import HTTPException
 from bson import ObjectId
 from datetime import datetime, timezone
 
-from ..db.mongo import progress_collection, users_collection
-from ..models.progress_model import ProgressModel
-from ..schemas.progress_schema import ProgressCreateRequest, ProgressResponse
-from ..models.auth import UserModel
-
+from ..db.mongo import progress_collection, users_collection, milestone_collection
+from ..schemas.progress_schema import (
+    ProgressCreateRequest,
+    ProgressResponse,
+    MilestoneStatus,
+)
 
 # ── helpers: UTC-safe ───────────────────────────────────────────────────────────
 
 def now_utc() -> datetime:
     return datetime.now(timezone.utc)
 
-def to_utc_aware(dt: datetime | None) -> datetime | None:
+def to_utc_aware(dt: Optional[datetime]) -> Optional[datetime]:
+    """
+    Ensure datetimes are timezone-aware and in UTC.
+    iOS parses both '...Z' and '...+00:00', so returning aware UTC datetimes is fine.
+    """
     if dt is None:
         return None
-    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
-
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
 
 # ✅ Save Progress (Create or Update)
-# (Your comment says Create or Update; this now truly does both.)
 async def save_user_progress(user_id: str, data: ProgressCreateRequest):
     existing = await progress_collection.find_one({"user_id": user_id})
 
@@ -43,7 +50,7 @@ async def save_user_progress(user_id: str, data: ProgressCreateRequest):
         return {"message": "✅ Progress updated successfully."}
     else:
         # Create new
-        update_data = {
+        doc = {
             "user_id": user_id,
             "last_relapse_date": last_relapse,
             "quit_date": quit_date,
@@ -52,14 +59,10 @@ async def save_user_progress(user_id: str, data: ProgressCreateRequest):
             "created_at": now_utc(),
             "updated_at": now_utc(),
         }
-        await progress_collection.insert_one(update_data)
+        await progress_collection.insert_one(doc)
         return {"message": "✅ Progress created successfully."}
 
-
 # ✅ Enhanced Progress Fetch with Milestone Calculation
-from ..db.mongo import milestone_collection
-from ..schemas.progress_schema import ProgressResponse, MilestoneStatus
-
 async def get_user_progress(user_id: str) -> ProgressResponse:
     progress = await progress_collection.find_one({"user_id": user_id})
     if not progress:
@@ -76,9 +79,9 @@ async def get_user_progress(user_id: str) -> ProgressResponse:
 
     # 🎯 Process milestone status
     unlocked_names = set(progress.get("milestones_unlocked", []))
-    latest_unlocked = None
-    current_in_progress = None
-    next_locked = None
+    latest_unlocked: Optional[MilestoneStatus] = None
+    current_in_progress: Optional[MilestoneStatus] = None
+    next_locked: Optional[MilestoneStatus] = None
     newly_unlocked = []
 
     for m in milestones:
@@ -128,7 +131,6 @@ async def get_user_progress(user_id: str) -> ProgressResponse:
         minutes_since_last_relapse=round(minutes_since, 2)
     )
 
-
 # ✅ Reset Progress (User Failed)
 async def reset_user_progress(user_id: str) -> ProgressResponse:
     user = await users_collection.find_one({"_id": ObjectId(user_id)})
@@ -160,6 +162,5 @@ async def reset_user_progress(user_id: str) -> ProgressResponse:
         {"$set": reset_data}
     )
 
-    # Reuse your main progress display logic
-    from .progress_controller import get_user_progress
+    # Return fresh computed view
     return await get_user_progress(user_id)

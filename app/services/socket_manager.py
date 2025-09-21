@@ -4,25 +4,42 @@ import jwt
 import socketio
 from typing import Dict, Set, Any, Optional, List
 from datetime import datetime
-from bson import ObjectId
+from urllib.parse import parse_qs
 
+from bson import ObjectId
 from app.db.mongo import (
     users_collection,
     socket_sessions_collection,
-    devices_collection,    # ensure in mongo.py
-    bumps_collection,      # ensure in mongo.py
+    devices_collection,
+    bumps_collection,
 )
 
+# ------------------------
+# Config
+# ------------------------
 JWT_SECRET = os.getenv("JWT_SECRET", "change_me")
 JWT_ALG = os.getenv("JWT_ALG", "HS256")
 
-# In-memory connection maps
+# Comma-separated list of origins, e.g. "https://nevermindbro.com,https://app.nevermindbro.com"
+_raw_origins = os.getenv("SOCKETIO_CORS_ORIGINS", "*").strip()
+if _raw_origins == "*" or not _raw_origins:
+    CORS_ORIGINS = "*"
+else:
+    CORS_ORIGINS = [o.strip() for o in _raw_origins.split(",") if o.strip()]
+
+# Use this when mounting ASGIApp in main.py:
+#   app = socketio.ASGIApp(sio, other_asgi_app=fastapi_app, socketio_path=SOCKETIO_PATH.lstrip('/'))
+SOCKETIO_PATH = os.getenv("SOCKETIO_PATH", "/socket.io")
+
+# ------------------------
+# In-memory maps
+# ------------------------
 user_to_sids: Dict[str, Set[str]] = {}
 sid_to_user: Dict[str, str] = {}
 
 sio = socketio.AsyncServer(
     async_mode="asgi",
-    cors_allowed_origins="*",
+    cors_allowed_origins=CORS_ORIGINS,
     ping_interval=25,
     ping_timeout=60,
 )
@@ -41,10 +58,8 @@ async def _remove_session(sid: str) -> None:
     await socket_sessions_collection.delete_one({"sid": sid})
 
 async def get_user_sids(user_id: str) -> List[str]:
-    # Fast path: in-memory
     if user_id in user_to_sids and user_to_sids[user_id]:
         return list(user_to_sids[user_id])
-    # Fallback: DB (e.g., after app restart)
     cursor = socket_sessions_collection.find({"user_id": user_id})
     return [doc["sid"] async for doc in cursor]
 
@@ -55,47 +70,84 @@ async def emit_to_user(user_id: str, event: str, payload: Any) -> int:
         delivered += 1
     return delivered
 
-def _extract_user_id_from_auth(auth: Optional[dict]) -> Optional[str]:
-    """
-    Accept either:
-      - auth = {"token": "<JWT>"} -> decode -> user_id/sub
-      - auth = {"user_id": "<id>"} (only in trusted scenarios)
-    """
-    if not auth or not isinstance(auth, dict):
+def _decode_jwt(maybe_token: Optional[str]) -> Optional[str]:
+    if not maybe_token:
+        return None
+    try:
+        payload = jwt.decode(maybe_token, JWT_SECRET, algorithms=[JWT_ALG])
+        uid = payload.get("user_id") or payload.get("sub")
+        return str(uid) if uid else None
+    except Exception:
         return None
 
-    token = auth.get("token")
-    if token:
-        try:
-            payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALG])
-            uid = payload.get("user_id") or payload.get("sub")
-            return str(uid) if uid else None
-        except Exception:
-            return None
+def _get_token_from_environ(environ: dict) -> Optional[str]:
+    # Authorization: Bearer <token>
+    authz = environ.get("HTTP_AUTHORIZATION") or environ.get("Authorization")
+    if authz and isinstance(authz, str):
+        parts = authz.split()
+        if len(parts) == 2 and parts[0].lower() == "bearer":
+            return parts[1]
 
-    uid = auth.get("user_id")
-    return str(uid) if uid else None
+    # Query string ?token=... or ?jwt=... or ?access_token=...
+    qs = parse_qs(environ.get("QUERY_STRING", "") or "")
+    for key in ("token", "jwt", "access_token"):
+        vals = qs.get(key)
+        if vals and len(vals) > 0 and vals[0]:
+            return vals[0]
+    return None
+
+def _extract_user_id_from_connect(environ: dict, auth: Optional[dict]) -> Optional[str]:
+    """
+    Accept JWT from:
+      1) JS-style auth dict: auth = {"token": "<JWT>"} or {"jwt": "<JWT>"}
+      2) Query string: ?token=... / ?jwt=... / ?access_token=...
+      3) Authorization header: Bearer <JWT>
+    (Optionally accepts auth = {"user_id": "<id>"} for trusted contexts.)
+    """
+    # 1) auth dict
+    if isinstance(auth, dict):
+        token = auth.get("token") or auth.get("jwt")
+        uid = _decode_jwt(token)
+        if uid:
+            return uid
+        # trusted fallback (avoid using this from untrusted clients)
+        raw_uid = auth.get("user_id")
+        if raw_uid:
+            return str(raw_uid)
+
+    # 2) Authorization header / query string
+    token = _get_token_from_environ(environ)
+    uid = _decode_jwt(token)
+    if uid:
+        return uid
+
+    return None
 
 # ------------------------
 # Lifecycle events
 # ------------------------
 @sio.event
 async def connect(sid, environ, auth):
-    user_id = _extract_user_id_from_auth(auth)
+    """
+    Swift example (Socket.IO-Client-Swift):
+      let manager = SocketManager(
+        socketURL: URL(string: "https://api.nevermindbro.com")!,
+        config: [.path("/socket.io"), .forceWebsockets(true),
+                 .connectParams(["token": "<JWT>"]), .compress, .log(true)]
+      )
+    """
+    user_id = _extract_user_id_from_connect(environ, auth)
     if not user_id:
         return False
 
-    # Validate ObjectId and user exists
     if not ObjectId.is_valid(user_id):
         return False
     if not await users_collection.find_one({"_id": ObjectId(user_id)}):
         return False
 
-    # Map connections
     sid_to_user[sid] = user_id
     user_to_sids.setdefault(user_id, set()).add(sid)
 
-    # Persist session
     await _persist_session(user_id, sid)
     return True
 
@@ -142,7 +194,7 @@ async def register_device(sid, data):
         await sio.emit("register_device_ack", {"ok": False, "error": str(e)}, to=sid)
 
 # ------------------------
-# Bump event (core) — THIS is where emit_to_user(...) lives
+# Bump event (core)
 # ------------------------
 @sio.on("bump")
 async def bump(sid, data):
@@ -160,11 +212,9 @@ async def bump(sid, data):
         if not to_user_id:
             return await sio.emit("bump_ack", {"ok": False, "reason": "missing_to_user_id"}, to=sid)
 
-        # Optional: ensure target exists if you use Mongo ObjectIds for users
         if not ObjectId.is_valid(to_user_id) or not await users_collection.find_one({"_id": ObjectId(to_user_id)}):
             return await sio.emit("bump_ack", {"ok": False, "reason": "target_not_found"}, to=sid)
 
-        # 1) Persist bump (source of truth)
         bump_doc = {
             "from_user_id": sender_id,
             "to_user_id": str(to_user_id),
@@ -174,7 +224,6 @@ async def bump(sid, data):
         }
         result = await bumps_collection.insert_one(bump_doc)
 
-        # 2) Deliver live over sockets  ⬅️ EXACT SPOT for emit_to_user(...)
         payload = {
             "type": "bump",
             "message": message,
@@ -184,16 +233,13 @@ async def bump(sid, data):
         }
         delivered = await emit_to_user(str(to_user_id), "bump", payload)
 
-        # 3) Update delivery stats on the bump record
         await bumps_collection.update_one(
             {"_id": result.inserted_id},
             {"$set": {"delivery.sockets_delivered": delivered}}
         )
 
-        # 4) (Optional) If delivered == 0, trigger APNs push using devices_collection
-        #    -> Look up devices by user_id and send via your push provider here.
+        # (Optional) If delivered == 0, look up devices in devices_collection and trigger APNs.
 
-        # 5) ACK back to sender
         await sio.emit(
             "bump_ack",
             {"ok": True, "to": str(to_user_id), "delivered": delivered, "bump_id": str(result.inserted_id)},
@@ -202,5 +248,4 @@ async def bump(sid, data):
     except Exception as e:
         await sio.emit("bump_ack", {"ok": False, "error": str(e)}, to=sid)
 
-# Exported for use elsewhere (server-initiated emits)
-__all__ = ["sio", "emit_to_user"]
+__all__ = ["sio", "emit_to_user", "SOCKETIO_PATH"]

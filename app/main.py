@@ -3,8 +3,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import socketio
 
-# Socket.IO server (already configured in services/socket_manager.py)
-from app.services.socket_manager import sio
+# Socket.IO server + locked path
+from app.services.socket_manager import sio, SOCKETIO_PATH
 from app.db.mongo import init_db_indexes
 
 # Routers
@@ -20,7 +20,7 @@ from app.routes.mypod_routes import router as mypod_router
 from app.routes.milestone import router as milestone_router
 from app.routes.onboarding import router as onboarding_router
 from app.routes.devices import router as devices_router
-from app.routes.bump import router as bump_router  # bump HTTP route (optional)
+from app.routes.bump import router as bump_router  # HTTP-triggered bump (optional)
 
 # ---------------------------
 # Build FastAPI app
@@ -73,8 +73,13 @@ async def on_startup():
         print("Index init error:", e)
 
 # ---------------------------
-# Mount Socket.IO at /socket.io/
+# Mount Socket.IO at locked path (must match iOS client)
 # ---------------------------
-# This 'app' is what Uvicorn/Gunicorn should run.
-# Run with: uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips="*"
-app = socketio.ASGIApp(sio, other_asgi_app=fastapi_app)
+# Example iOS config:
+#   .path("/socket.io"), .forceWebsockets(true),
+#   .connectParams(["token": "<JWT>"])
+app = socketio.ASGIApp(
+    sio,
+    other_asgi_app=fastapi_app,
+    socketio_path=SOCKETIO_PATH.lstrip("/"),
+)
