@@ -3,7 +3,6 @@
 from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime
-from ._base_datetime import NaiveIsoDatetimeModel
 
 class MilestoneStatus(BaseModel):
     name: str
@@ -17,7 +16,7 @@ class ProgressCreateRequest(BaseModel):
     days_tracked: Optional[List[datetime]] = []
     milestones_unlocked: Optional[List[str]] = []
 
-class ProgressResponse(NaiveIsoDatetimeModel):
+class ProgressResponse(BaseModel):
     user_id: str
     last_relapse_date: Optional[datetime]
     quit_date: Optional[datetime]

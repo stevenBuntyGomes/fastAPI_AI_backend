@@ -1,9 +1,9 @@
+# app/schemas/mypod_schema.py
 from pydantic import BaseModel, Field
 from typing import List, Optional
 from typing_extensions import Annotated
 from pydantic.functional_validators import BeforeValidator
 from datetime import datetime
-from ._base_datetime import NaiveIsoDatetimeModel
 
 # ObjectId as string
 PyObjectId = Annotated[str, BeforeValidator(lambda x: str(x))]
@@ -27,7 +27,7 @@ class BumpEntry(BaseModel):
     timestamps: List[str] = Field(default_factory=list)
 
 # 🔹 Main Schema
-class MyPodModel(NaiveIsoDatetimeModel):  # ✅ renamed from MyPodSchema
+class MyPodModel(BaseModel):  # ✅ renamed from MyPodSchema
     id: Optional[PyObjectId] = Field(default=None, alias="_id")
     user_id: PyObjectId
     username: str

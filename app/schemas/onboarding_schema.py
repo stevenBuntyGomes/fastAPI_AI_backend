@@ -3,8 +3,6 @@
 from pydantic import BaseModel, Field
 from typing import Optional, Literal
 from datetime import datetime
-from ._base_datetime import NaiveIsoDatetimeModel
-
 
 class OnboardingRequest(BaseModel):
     # ENUM fields for AI context
@@ -28,18 +26,12 @@ class OnboardingRequest(BaseModel):
     gender: Optional[Literal["male", "female", "non-binary", "prefer not to say"]] = None
     age: Optional[int] = None
 
-
 class OnboardingResponse(BaseModel):
-    """
-    Response returned by POST /onboarding
-    """
+    """Response returned by POST /onboarding"""
     onboarding_id: str = Field(..., description="Inserted onboarding document id")
 
-
-class OnboardingOut(NaiveIsoDatetimeModel):
-    """
-    Response returned by GET/PATCH /onboarding/{id}
-    """
+class OnboardingOut(BaseModel):
+    """Response returned by GET/PATCH /onboarding/{id}"""
     id: str
 
     vaping_frequency: Optional[Literal["never", "occasionally", "daily"]] = None

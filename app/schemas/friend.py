@@ -1,30 +1,26 @@
+# app/schemas/friend_schema.py
 from pydantic import BaseModel, Field
 from typing import List, Optional
 from datetime import datetime
 from bson import ObjectId
 from typing_extensions import Annotated
 from pydantic.functional_validators import BeforeValidator
-from ._base_datetime import NaiveIsoDatetimeModel
 
 # Convert ObjectId to string for safe serialization
 PyObjectId = Annotated[str, BeforeValidator(lambda x: str(x))]
-
 
 # ✅ Embedded data classes
 class BackupRequest(BaseModel):
     message: Optional[str] = None
     timestamp: datetime = Field(default_factory=datetime.utcnow)
 
-
 class CheckInNudge(BaseModel):
     message: Optional[str] = None
     timestamp: datetime = Field(default_factory=datetime.utcnow)
 
-
 class MotivationHit(BaseModel):
     message: Optional[str] = None
     timestamp: datetime = Field(default_factory=datetime.utcnow)
-
 
 # ✅ Create schema
 class FriendCreate(BaseModel):
@@ -37,7 +33,6 @@ class FriendCreate(BaseModel):
     check_in_nudges: List[CheckInNudge] = Field(default_factory=list)
     motivation_hits: List[MotivationHit] = Field(default_factory=list)
 
-
 # ✅ Update schema
 class FriendUpdate(BaseModel):
     friends_list: Optional[List[PyObjectId]] = None
@@ -48,8 +43,7 @@ class FriendUpdate(BaseModel):
     check_in_nudges: Optional[List[CheckInNudge]] = None
     motivation_hits: Optional[List[MotivationHit]] = None
 
-
 # ✅ Response schema
-class FriendResponse(FriendCreate, NaiveIsoDatetimeModel):
+class FriendResponse(FriendCreate):
     id: str
     user_id: str

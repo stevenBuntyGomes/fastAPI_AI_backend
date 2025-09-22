@@ -1,13 +1,12 @@
+# app/schemas/community_schema.py
 from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime
-from ._base_datetime import NaiveIsoDatetimeModel
 
 class AuthorPreview(BaseModel):
     id: str
     name: Optional[str]
     profile_picture: Optional[str] = None
-
 
 class CommentCreateRequest(BaseModel):
     comment_text: str
@@ -18,8 +17,7 @@ class CommentSchema(BaseModel):
     comment_text: str
     comment_author_id: str
     comment_timestamp: Optional[datetime] = None
-    author: Optional[AuthorPreview] = None  
-
+    author: Optional[AuthorPreview] = None
 
 # Post Schema
 class PostSchema(BaseModel):
@@ -31,22 +29,19 @@ class PostSchema(BaseModel):
     liked_by: List[str] = []
     comments: List[CommentSchema] = []
 
-
 # User Social Stats
 class UserSocialStatsSchema(BaseModel):
     posts: int = 0
     likes_given: int = 0
     comments: int = 0
 
-
 # Full Community Schema
-class CommunitySchema(NaiveIsoDatetimeModel):
+class CommunitySchema(BaseModel):
     user_id: str
     posts: List[PostSchema] = []
     user_social_stats: UserSocialStatsSchema = UserSocialStatsSchema()
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
-
 
 # Post Update Schema
 class PostUpdateRequest(BaseModel):
@@ -57,8 +52,7 @@ class PostCreateRequest(BaseModel):
     post_text: str
     post_visibility: str  # e.g., "community" or "friends_only"
 
-
-class PostResponse(NaiveIsoDatetimeModel):
+class PostResponse(BaseModel):
     id: str  # assuming MongoDB ObjectId will be serialized as string
     post_text: str
     post_author_id: str

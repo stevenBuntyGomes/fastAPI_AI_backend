@@ -2,7 +2,7 @@
 from typing import Optional, List
 from fastapi import HTTPException
 from bson import ObjectId
-from datetime import datetime, timezone
+from datetime import datetime
 
 from ..db.mongo import progress_collection, users_collection, milestone_collection
 from ..schemas.progress_schema import (
@@ -13,21 +13,6 @@ from ..schemas.progress_schema import (
 
 # ── config ──────────────────────────────────────────────────────────────────────
 AURA_PER_MILESTONE = 20  # ← award per newly unlocked milestone
-
-# ── helpers: UTC-safe ───────────────────────────────────────────────────────────
-def now_utc() -> datetime:
-    return datetime.now(timezone.utc)
-
-def to_utc_aware(dt: Optional[datetime]) -> Optional[datetime]:
-    """
-    Ensure datetimes are timezone-aware and in UTC.
-    iOS parses both '...Z' and '...+00:00', so returning aware UTC datetimes is fine.
-    """
-    if dt is None:
-        return None
-    if dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
 
 def _as_oid(user_id: str) -> ObjectId:
     try:
@@ -43,16 +28,16 @@ async def _increment_user_aura(user_id: str, points: int) -> None:
         return
     await users_collection.update_one(
         {"_id": _as_oid(user_id)},
-        {"$inc": {"aura": points}, "$set": {"updated_at": now_utc()}}
+        {"$inc": {"aura": points}, "$set": {"updated_at": datetime.utcnow()}}
     )
 
 # ✅ Save Progress (Create or Update)
 async def save_user_progress(user_id: str, data: ProgressCreateRequest):
     existing = await progress_collection.find_one({"user_id": user_id})
 
-    last_relapse = to_utc_aware(data.last_relapse_date)
+    last_relapse = data.last_relapse_date
     # If schema has quit_date, use it; else default to last_relapse
-    quit_date = to_utc_aware(getattr(data, "quit_date", None)) or last_relapse
+    quit_date = getattr(data, "quit_date", None) or last_relapse
 
     # Normalize incoming milestones list (de-dupe, keep order)
     incoming_unlocked: List[str] = list(dict.fromkeys(data.milestones_unlocked or []))
@@ -70,7 +55,7 @@ async def save_user_progress(user_id: str, data: ProgressCreateRequest):
                 "quit_date": quit_date,
                 "days_tracked": data.days_tracked or [],
                 "milestones_unlocked": incoming_unlocked,
-                "updated_at": now_utc(),
+                "updated_at": datetime.utcnow(),
             }}
         )
 
@@ -88,8 +73,8 @@ async def save_user_progress(user_id: str, data: ProgressCreateRequest):
             "quit_date": quit_date,
             "days_tracked": data.days_tracked or [],
             "milestones_unlocked": incoming_unlocked,
-            "created_at": now_utc(),
-            "updated_at": now_utc(),
+            "created_at": datetime.utcnow(),
+            "updated_at": datetime.utcnow(),
         }
         await progress_collection.insert_one(doc)
         return {"message": "✅ Progress created successfully."}
@@ -100,9 +85,9 @@ async def get_user_progress(user_id: str) -> ProgressResponse:
     if not progress:
         raise HTTPException(status_code=404, detail="❌ No progress found.")
 
-    # ⏱ Calculate time since last relapse (UTC-aware)
-    now = now_utc()
-    relapse_time = to_utc_aware(progress.get("last_relapse_date") or progress["created_at"])
+    # ⏱ Calculate time since last relapse (naive UTC as before)
+    now = datetime.utcnow()
+    relapse_time = progress.get("last_relapse_date") or progress["created_at"]
     minutes_since = (now - relapse_time).total_seconds() / 60
 
     # 🔐 Fetch milestone definitions
@@ -155,11 +140,11 @@ async def get_user_progress(user_id: str) -> ProgressResponse:
     # ✅ Prepare response
     return ProgressResponse(
         user_id=str(progress["user_id"]),
-        last_relapse_date=to_utc_aware(progress.get("last_relapse_date")),
-        quit_date=to_utc_aware(progress.get("quit_date")),
+        last_relapse_date=progress.get("last_relapse_date"),
+        quit_date=progress.get("quit_date"),
         days_tracked=progress.get("days_tracked", []),
         milestones_unlocked=list(unlocked_names),
-        created_at=to_utc_aware(progress.get("created_at", now)),
+        created_at=progress.get("created_at", now),
         latest_unlocked=latest_unlocked,
         current_in_progress=current_in_progress,
         next_locked=next_locked,
@@ -173,7 +158,7 @@ async def reset_user_progress(user_id: str) -> ProgressResponse:
     if not _:
         raise HTTPException(status_code=404, detail="❌ User not found.")
 
-    now = now_utc()
+    now = datetime.utcnow()
 
     # Fetch current progress (to preserve milestones + created_at)
     existing_progress = await progress_collection.find_one({"user_id": user_id})
@@ -181,7 +166,7 @@ async def reset_user_progress(user_id: str) -> ProgressResponse:
         raise HTTPException(status_code=404, detail="❌ No progress data to reset.")
 
     milestones = existing_progress.get("milestones_unlocked", [])
-    created_at = to_utc_aware(existing_progress.get("created_at", now))
+    created_at = existing_progress.get("created_at", now)
 
     # Reset progress fields (but NOT created_at, and no aura changes here)
     reset_data = {
