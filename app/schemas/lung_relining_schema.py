@@ -1,4 +1,3 @@
-# app/schemas/lung_relining_schema.py
 from pydantic import BaseModel
 from typing import Optional, Dict
 from datetime import datetime
@@ -8,7 +7,7 @@ class LungReliningCreateRequest(BaseModel):
     quit_date: datetime
 
 class LungReliningUpdateRequest(BaseModel):
-    # Only this field is editable via the PATCH endpoint
+    # Only this field is editable through PATCH
     last_relapse_date: datetime
 
 class LungReliningResponse(BaseModel):
@@ -19,4 +18,4 @@ class LungReliningResponse(BaseModel):
     percent_of_90_days: float
     created_at: datetime
     updated_at: Optional[datetime] = None
-    user: Dict[str, Optional[str]]  # {"id", "email", "name"}
+    user: Dict[str, Optional[str]]  # {"id","email","name"}
