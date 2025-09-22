@@ -23,6 +23,13 @@ async def get_user_lung_relining_entries(
 ):
     return await lung_relining_controller.get_user_lung_relining_entries(current_user)
 
+@router.get("/lung-relining/{entry_id}", response_model=LungReliningResponse)
+async def get_lung_relining_entry_by_id(
+    entry_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    return await lung_relining_controller.get_lung_relining_entry_by_id(entry_id, current_user)
+
 @router.patch("/lung-relining/{entry_id}", response_model=LungReliningResponse)
 async def update_lung_relining_last_relapse(
     entry_id: str,

@@ -5,6 +5,7 @@ from bson import ObjectId
 from typing_extensions import Annotated
 from pydantic.functional_validators import BeforeValidator
 
+# Store ObjectId as string in/out
 PyObjectId = Annotated[str, BeforeValidator(lambda x: str(x))]
 
 class LungReliningModel(BaseModel):
@@ -15,7 +16,7 @@ class LungReliningModel(BaseModel):
     delta_seconds: float
     percent_of_90_days: float
     created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: Optional[datetime] = None  # new
+    updated_at: Optional[datetime] = None
 
     model_config = {
         "populate_by_name": True,

@@ -1,27 +1,21 @@
-# app/schemas/lung_check_schema.py
-from pydantic import BaseModel, Field
-from typing import List
+from pydantic import BaseModel
+from typing import Optional, Dict
 from datetime import datetime
-from typing_extensions import Annotated
-from pydantic.functional_validators import BeforeValidator
 
-# MongoDB ObjectId-safe string
-PyObjectId = Annotated[str, BeforeValidator(lambda x: str(x))]
+class LungReliningCreateRequest(BaseModel):
+    last_relapse_date: datetime
+    quit_date: datetime
 
-# 🔹 Individual lung check entry
-class LungCheckEntry(BaseModel):
-    timestamp: datetime
-    duration: float  # in seconds
+class LungReliningUpdateRequest(BaseModel):
+    # Only this field is editable through PATCH
+    last_relapse_date: datetime
 
-# 🔹 Request to submit lung check history (list of entries)
-class LungCheckCreateRequest(BaseModel):
-    lung_check_history: List[LungCheckEntry]
-
-# 🔹 Response schema with Mongo-style ID
-class LungCheckResponse(BaseModel):
-    id: PyObjectId = Field(alias="_id")
-    user_id: PyObjectId
-    lung_check_history: List[LungCheckEntry]
+class LungReliningResponse(BaseModel):
+    id: Optional[str] = None
+    last_relapse_date: datetime
+    quit_date: datetime
+    delta_seconds: float
+    percent_of_90_days: float
     created_at: datetime
-    skip: int = 0
-    limit: int = 7
+    updated_at: Optional[datetime] = None
+    user: Dict[str, Optional[str]]  # {"id","email","name"}
