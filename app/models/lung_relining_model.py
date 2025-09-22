@@ -9,12 +9,13 @@ PyObjectId = Annotated[str, BeforeValidator(lambda x: str(x))]
 
 class LungReliningModel(BaseModel):
     id: Optional[PyObjectId] = Field(alias="_id", default=None)
-    user_id: PyObjectId                   # Authenticated user
-    last_relapse_date: datetime           # Input
-    quit_date: datetime                   # Input
-    delta_seconds: float                  # Computed: (last_relapse_date - quit_date) in seconds
-    percent_of_90_days: float            # Computed: (delta_seconds / 7_776_000) * 100
+    user_id: PyObjectId
+    last_relapse_date: datetime
+    quit_date: datetime
+    delta_seconds: float
+    percent_of_90_days: float
     created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: Optional[datetime] = None  # new
 
     model_config = {
         "populate_by_name": True,

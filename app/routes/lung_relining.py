@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends
 from typing import List
 from app.schemas.lung_relining_schema import (
     LungReliningCreateRequest,
+    LungReliningUpdateRequest,
     LungReliningResponse,
 )
 from app.controllers import lung_relining_controller
@@ -21,3 +22,11 @@ async def get_user_lung_relining_entries(
     current_user: dict = Depends(get_current_user),
 ):
     return await lung_relining_controller.get_user_lung_relining_entries(current_user)
+
+@router.patch("/lung-relining/{entry_id}", response_model=LungReliningResponse)
+async def update_lung_relining_last_relapse(
+    entry_id: str,
+    data: LungReliningUpdateRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    return await lung_relining_controller.update_lung_relining_last_relapse(entry_id, data, current_user)
