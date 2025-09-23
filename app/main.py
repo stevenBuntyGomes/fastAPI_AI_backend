@@ -1,10 +1,7 @@
 # app/main.py
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-import socketio
 
-# Socket.IO server + locked path
-from app.services.socket_manager import sio, SOCKETIO_PATH
 from app.db.mongo import init_db_indexes
 
 # Routers
@@ -19,10 +16,8 @@ from app.routes.friend import router as friend_router
 from app.routes.mypod_routes import router as mypod_router
 from app.routes.milestone import router as milestone_router
 from app.routes.onboarding import router as onboarding_router
-
-# ✅ New/updated routes (APNs + Bump)
 from app.routes.devices import router as devices_router
-from app.routes.bump import router as bump_router  # HTTP-triggered bump
+from app.routes.bump import router as bump_router  # APNs-only bump
 
 # ---------------------------
 # Build FastAPI app
@@ -32,7 +27,7 @@ fastapi_app = FastAPI(title="Voice AI Backend", version="1.0.0")
 # CORS — keep wide open for now; tighten for production if needed
 fastapi_app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],           # consider restricting to your domains in prod
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -61,7 +56,7 @@ fastapi_app.include_router(friend_router)
 fastapi_app.include_router(mypod_router)
 fastapi_app.include_router(milestone_router)
 
-# ✅ APNs device registration + bump push
+# APNs device registration + bump push (no Socket.IO)
 fastapi_app.include_router(devices_router)
 fastapi_app.include_router(bump_router)
 
@@ -77,13 +72,6 @@ async def on_startup():
         print("Index init error:", e)
 
 # ---------------------------
-# Mount Socket.IO at locked path (must match iOS client)
+# Final ASGI app export (no Socket.IO wrapper)
 # ---------------------------
-# Example iOS Socket.IO config:
-#   .path("/socket.io"), .forceWebsockets(true),
-#   .connectParams(["token": "<JWT>"])
-app = socketio.ASGIApp(
-    sio,
-    other_asgi_app=fastapi_app,
-    socketio_path=SOCKETIO_PATH.lstrip("/"),
-)
+app = fastapi_app

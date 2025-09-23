@@ -37,7 +37,10 @@ async def init_db_indexes() -> None:
     await socket_sessions_collection.create_index([("user_id", 1)])
     await socket_sessions_collection.create_index([("sid", 1)], unique=True)
 
-    await devices_collection.create_index([("user_id", 1), ("platform", 1)], unique=True)
+    await devices_collection.create_index(
+        [("user_id", 1), ("platform", 1), ("token", 1)],
+        unique=True
+    )
     await devices_collection.create_index("updated_at")
 
     await bumps_collection.create_index([("to_user_id", 1), ("created_at", -1)])

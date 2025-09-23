@@ -6,7 +6,6 @@ from datetime import datetime
 from bson import ObjectId
 
 from app.db.mongo import users_collection, bumps_collection
-from app.services.socket_manager import emit_to_user
 from app.services.apns_service import send_to_user as send_apns_to_user
 from app.utils.auth_utils import get_current_user  # existing auth dependency
 
@@ -33,46 +32,42 @@ async def create_bump(body: BumpBody, current_user = Depends(get_current_user)):
         raise HTTPException(status_code=400, detail="Invalid to_user_id")
 
     # ensure recipient exists
-    if not await users_collection.find_one({"_id": to_oid}):
+    if not await users_collection.find_one({"_id": to_oid}, {"_id": 1}):
         raise HTTPException(status_code=404, detail="Recipient not found")
 
     # persist bump
     msg = body.message or "🔔 Bump!"
+    now = datetime.utcnow()
     bump_doc = {
         "from_user_id": sender_oid,
         "to_user_id": to_oid,
         "message": msg,
-        "created_at": datetime.utcnow(),
+        "created_at": now,
         "via": "rest",
     }
     ins = await bumps_collection.insert_one(bump_doc)
     bump_id = ins.inserted_id
 
-    # 1) Real-time Socket.IO (if online)
-    delivered = await emit_to_user(
-        str(to_oid),
-        "bump",
-        {
-            "type": "bump",
-            "message": msg,
-            "from": str(sender_oid),
-            "bump_id": str(bump_id),
-            "created_at": bump_doc["created_at"].isoformat() + "Z",
-        },
-    )
-
-    # 2) APNs push (background/terminated)
-    apns_result = await send_apns_to_user(
-        user_id=str(to_oid),
-        title="New bump",
-        body=msg,
-        data={"type": "bump", "from": str(sender_oid), "bump_id": str(bump_id)},
-    )
+    # APNs push only (no Socket.IO)
+    try:
+        apns_result = await send_apns_to_user(
+            user_id=str(to_oid),
+            title="New bump",
+            body=msg,
+            data={
+                "type": "bump",
+                "from": str(sender_oid),
+                "to": str(to_oid),
+                "bump_id": str(bump_id),
+                "created_at": now.isoformat() + "Z",
+            },
+        )
+    except Exception as e:
+        apns_result = {"sent": 0, "results": [], "error": str(e)}
 
     return {
         "ok": True,
         "to": str(to_oid),
         "bump_id": str(bump_id),
-        "delivered": delivered,
         "apns": apns_result,
     }
