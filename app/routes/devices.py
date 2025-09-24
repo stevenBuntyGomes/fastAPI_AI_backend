@@ -26,33 +26,42 @@ async def register_apns_token(
     body: RegisterTokenBody,
     current_user = Depends(get_current_user),
 ):
-    # Normalize token: keep only hex chars
     raw = body.token or ""
     token = re.sub(r"[^0-9a-fA-F]", "", raw)
     if not HEX_RE.match(token):
         raise HTTPException(status_code=400, detail="Invalid APNs token format")
 
+    # Validate user id
     try:
         user_oid = current_user["_id"]
         if not isinstance(user_oid, ObjectId):
             user_oid = ObjectId(str(user_oid))
     except Exception:
-        raise HTTPException(status_code=400, detail="Invalid authenticated user")
+        raise HTTPException(status_code=401, detail="Invalid/expired authentication")
+
+    # Build doc
+    env = (body.environment or os.getenv("APNS_ENV", "sandbox")).lower()
+    if env not in ("sandbox", "production"):
+        raise HTTPException(status_code=400, detail="environment must be 'sandbox' or 'production'")
 
     doc = {
         "user_id": user_oid,
         "platform": "ios",
         "token": token,
         "bundle_id": body.bundle_id or os.getenv("APNS_BUNDLE_ID"),
-        "environment": (body.environment or os.getenv("APNS_ENV", "sandbox")).lower(),
+        "environment": env,
         "updated_at": datetime.utcnow(),
     }
 
-    # One row per (user_id, platform, token)
-    await devices_collection.update_one(
-        {"user_id": user_oid, "platform": "ios", "token": token},
-        {"$set": doc},
-        upsert=True,
-    )
+    # Upsert with error handling
+    try:
+        await devices_collection.update_one(
+            {"user_id": user_oid, "platform": "ios", "token": token},
+            {"$set": doc, "$setOnInsert": {"created_at": datetime.utcnow()}},
+            upsert=True,
+        )
+    except Exception as e:
+        # log e on server
+        raise HTTPException(status_code=500, detail="Database error while saving device")
 
     return {"ok": True}
