@@ -11,7 +11,7 @@ def calculate_recovery_data(last_relapse_date: datetime):
     today = datetime.now(timezone.utc)
     days_passed = (today - last_relapse_date).days
     percentage = min((days_passed / 90) * 100, 100)
-    quit_date = last_relapse_date + timedelta(days=90)
+    quit_date = last_relapse_date
     return round(percentage, 2), quit_date
 
 

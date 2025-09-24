@@ -3,18 +3,20 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from typing import Optional, Literal
 from datetime import datetime
-import os, re, sys, traceback                      # ← add sys, traceback
+import os, re, sys, traceback
 from bson import ObjectId
-from pymongo.errors import DuplicateKeyError       # ← add DuplicateKeyError
+from pymongo.errors import DuplicateKeyError
 
 from app.db.mongo import devices_collection
 from app.utils.auth_utils import get_current_user
 
 router = APIRouter(prefix="/devices", tags=["devices"])
+
+# Apple token: 32 bytes => 64 hex chars; allow longer to be tolerant
 HEX_RE = re.compile(r"^[0-9a-fA-F]{64,256}$")
 
 class RegisterTokenBody(BaseModel):
-    token: str = Field(..., description="APNs device token as a hex string")
+    token: str = Field(..., description="APNs device token (hex)")
     bundle_id: Optional[str] = None
     environment: Optional[Literal["sandbox", "production"]] = None
 
@@ -23,7 +25,7 @@ async def register_apns_token(
     body: RegisterTokenBody,
     current_user = Depends(get_current_user),
 ):
-    # normalize + validate
+    # normalize + validate token
     raw = body.token or ""
     token = re.sub(r"[^0-9a-fA-F]", "", raw)
     if not HEX_RE.match(token):
@@ -42,7 +44,7 @@ async def register_apns_token(
         raise HTTPException(status_code=400, detail="environment must be 'sandbox' or 'production'")
 
     doc = {
-        "user_id": user_oid,
+        "user_id": user_oid,                # ← reassign device to this user
         "platform": "ios",
         "token": token,
         "bundle_id": body.bundle_id or os.getenv("APNS_BUNDLE_ID"),
@@ -50,21 +52,23 @@ async def register_apns_token(
         "updated_at": datetime.utcnow(),
     }
 
-    # ---- wrap your DB write in try/except (this is the bit you asked about) ----
+    # Option A: upsert by (platform, token) so each physical device is unique
     try:
-        # keep your current uniqueness semantics:
         await devices_collection.update_one(
-            {"user_id": user_oid, "platform": "ios", "token": token},
+            {"platform": "ios", "token": token},
             {"$set": doc, "$setOnInsert": {"created_at": datetime.utcnow()}},
             upsert=True,
         )
         return {"ok": True}
     except DuplicateKeyError:
-        # harmless duplicate – treat as success
-        return {"ok": True, "note": "duplicate token index"}
+        # rare race; retry as non-upsert
+        await devices_collection.update_one(
+            {"platform": "ios", "token": token},
+            {"$set": doc},
+            upsert=False,
+        )
+        return {"ok": True, "note": "resolved duplicate index"}
     except Exception as e:
-        # this line logs the real error to journald so we can see it
         print("❌ devices/apns DB error:", repr(e), file=sys.stderr)
         traceback.print_exc()
-        # keep response generic
         raise HTTPException(status_code=500, detail="Database error while saving device")
