@@ -4,7 +4,7 @@ from pydantic import BaseModel
 from bson import ObjectId
 from typing import Optional
 from app.db.mongo import devices_collection
-from app.services.apns_client import send_apns_push
+from app.services.apns_service import send_apns_push
 
 router = APIRouter(prefix="/bump", tags=["bump"])
 
