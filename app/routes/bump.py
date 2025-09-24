@@ -1,73 +1,43 @@
-# app/routes/bump.py
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
-from typing import Optional
-from datetime import datetime
+# app/bump.py
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 from bson import ObjectId
-
-from app.db.mongo import users_collection, bumps_collection
-from app.services.apns_service import send_to_user as send_apns_to_user
-from app.utils.auth_utils import get_current_user  # existing auth dependency
+from typing import Optional
+from app.db.mongo import devices_collection
+from app.services.apns_client import send_apns_push
 
 router = APIRouter(prefix="/bump", tags=["bump"])
 
 class BumpBody(BaseModel):
-    to_user_id: str = Field(..., description="Recipient user ObjectId (string)")
-    message: Optional[str] = Field(default="🔔 Bump!")
+    to_user_id: str
+    message: str = "🔔 Bump!"
 
 @router.post("")
-async def create_bump(body: BumpBody, current_user = Depends(get_current_user)):
-    # sender
+async def send_bump(body: BumpBody):
+    # validate target
     try:
-        sender_oid = current_user["_id"]
-        if not isinstance(sender_oid, ObjectId):
-            sender_oid = ObjectId(str(sender_oid))
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid authenticated user")
-
-    # recipient
-    try:
-        to_oid = ObjectId(body.to_user_id.strip())
+        to_oid = ObjectId(body.to_user_id)
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid to_user_id")
 
-    # ensure recipient exists
-    if not await users_collection.find_one({"_id": to_oid}, {"_id": 1}):
-        raise HTTPException(status_code=404, detail="Recipient not found")
+    # fetch that user's iOS token (one per your rule)
+    d: Optional[dict] = await devices_collection.find_one({"user_id": to_oid, "platform": "ios"})
+    if not d or not d.get("token"):
+        return {"ok": True, "sent": 0, "note": "No iOS device for user"}
 
-    # persist bump
-    msg = body.message or "🔔 Bump!"
-    now = datetime.utcnow()
-    bump_doc = {
-        "from_user_id": sender_oid,
-        "to_user_id": to_oid,
-        "message": msg,
-        "created_at": now,
-        "via": "rest",
-    }
-    ins = await bumps_collection.insert_one(bump_doc)
-    bump_id = ins.inserted_id
+    res = await send_apns_push(
+        token_hex=d["token"],
+        env=(d.get("environment") or "production").lower(),
+        alert={"title": "Breathr", "body": body.message},
+        push_type="alert",
+        thread_id="bump",
+        category="BUMP"
+    )
 
-    # APNs push only (no Socket.IO)
-    try:
-        apns_result = await send_apns_to_user(
-            user_id=str(to_oid),
-            title="New bump",
-            body=msg,
-            data={
-                "type": "bump",
-                "from": str(sender_oid),
-                "to": str(to_oid),
-                "bump_id": str(bump_id),
-                "created_at": now.isoformat() + "Z",
-            },
-        )
-    except Exception as e:
-        apns_result = {"sent": 0, "results": [], "error": str(e)}
+    # Optional: if token is dead, remove it
+    if not res["ok"]:
+        if res.get("status") in (400, 410) and (res.get("body", {}).get("reason") in ("BadDeviceToken", "Unregistered")):
+            await devices_collection.delete_one({"_id": d["_id"]})
+            return {"ok": False, "sent": 0, "pruned": 1, "apns": res}
 
-    return {
-        "ok": True,
-        "to": str(to_oid),
-        "bump_id": str(bump_id),
-        "apns": apns_result,
-    }
+    return {"ok": True, "sent": 1, "apns": {"status": res["status"], "body": res.get("body")}}
