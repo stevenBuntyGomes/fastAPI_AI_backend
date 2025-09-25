@@ -81,9 +81,9 @@ async def register_apns_device(body: RegisterDeviceBody):
         raise HTTPException(status_code=400, detail="Invalid user_id")
 
     # Keep the sanitizer: prevents storing junk like "<abcd 1234>" or base64
-    token = re.sub(r"[^0-9a-fA-F]", "", body.token or "")
-    if not HEX_RE.fullmatch(token):
-        raise HTTPException(status_code=400, detail="Invalid APNs token format")
+    # token = re.sub(r"[^0-9a-fA-F]", "", body.token or "")
+    # if not HEX_RE.fullmatch(token):
+    #     raise HTTPException(status_code=400, detail="Invalid APNs token format")
 
     bundle_id = body.bundle_id or os.getenv("APNS_BUNDLE_ID")
     if not bundle_id:
