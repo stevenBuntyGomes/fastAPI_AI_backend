@@ -1,23 +1,27 @@
 # app/controllers/friend_controller.py
 from datetime import datetime
-from typing import List, Literal, Optional
+from typing import List, Optional
 from bson import ObjectId
 from fastapi import HTTPException
 
 from ..schemas.friend import (
-    FriendCreate, FriendUpdate, FriendResponse,
-    FriendRequestSend, FriendRequestAct, FriendRequestListQuery,
-    FriendRequestResponse
+    FriendCreate,
+    FriendUpdate,
+    FriendResponse,
+    FriendRequestSend,
+    FriendRequestAct,
+    FriendRequestListQuery,
+    FriendRequestResponse,
+    UnfriendRequest,
 )
 from ..db.mongo import (
     friend_collection,
-    friend_requests_collection,  # NEW collection
+    friend_requests_collection,   # <-- REQUIRED for requests
     users_collection,
     mypod_collection,
     recovery_collection,
 )
-from .mypod_controller import upsert_friend_in_mypod  # you already have MyPod wiring
-
+from .mypod_controller import upsert_friend_in_mypod  # keep existing wiring
 
 # -----------------------------
 # Helpers
@@ -48,6 +52,30 @@ async def _lookup_friend_defaults(friend_user_oid: ObjectId) -> dict:
 
     return {"aura": aura, "login_streak": login_streak, "quit_date": quit_date}
 
+async def _remove_friend_in_mypod(owner_user_id: str, friend_user_id: str) -> None:
+    """
+    Best-effort removal from MyPod friends list for various shapes.
+    """
+    owner_oid = _as_oid(owner_user_id)
+
+    # Array of objects: { friend_id: "<id>", ... }
+    await mypod_collection.update_one(
+        {"user_id": owner_oid},
+        {"$pull": {"friends_list": {"friend_id": str(friend_user_id)}}}
+    )
+    # Array of plain strings
+    await mypod_collection.update_one(
+        {"user_id": owner_oid},
+        {"$pull": {"friends_list": str(friend_user_id)}}
+    )
+    # Array of ObjectIds
+    try:
+        await mypod_collection.update_one(
+            {"user_id": owner_oid},
+            {"$pull": {"friends_list": _as_oid(friend_user_id)}}
+        )
+    except HTTPException:
+        pass
 
 # -----------------------------
 # Friend Profile (existing)
@@ -72,7 +100,7 @@ async def create_friend_profile(user: dict, data: FriendCreate) -> FriendRespons
     body["created_at"] = datetime.utcnow()
     body["updated_at"] = datetime.utcnow()
 
-    # Auto-fill the three fields if not provided by client
+    # Auto-fill fields if missing
     body["friend_aura"] = (
         data.friend_aura if data.friend_aura is not None else defaults["aura"]
     )
@@ -82,22 +110,21 @@ async def create_friend_profile(user: dict, data: FriendCreate) -> FriendRespons
     if data.friend_quit_date is None and defaults["quit_date"] is not None:
         body["friend_quit_date"] = defaults["quit_date"]
 
-    # Insert (idempotent upsert behavior by unique key can be added if you have an index)
+    # Insert
     try:
         result = await friend_collection.insert_one(body)
     except Exception as e:
-        # If already exists, surface conflict
         if "E11000" in str(e):
+            # Unique (user_id, friend_id) index will throw this; treat as already exists
             raise HTTPException(status_code=409, detail="Friend profile already exists.")
         raise
 
     body["id"] = str(result.inserted_id)
 
-    # Keep MyPod.friends_list in sync (your existing design)
+    # Keep MyPod in sync
     await upsert_friend_in_mypod(str(owner_oid), str(friend_user_oid))
 
     return FriendResponse(**body)
-
 
 async def get_friend_profiles(user: dict) -> List[FriendResponse]:
     user_id = str(user["_id"])
@@ -109,7 +136,6 @@ async def get_friend_profiles(user: dict) -> List[FriendResponse]:
         profile["friends_list"] = [str(fid) for fid in profile.get("friends_list", [])]
         profiles.append(FriendResponse(**profile))
     return profiles
-
 
 async def get_friend_profile_by_id(friend_id: str, user: dict) -> FriendResponse:
     try:
@@ -125,7 +151,6 @@ async def get_friend_profile_by_id(friend_id: str, user: dict) -> FriendResponse
     profile["user_id"] = str(profile["user_id"])
     profile["friends_list"] = [str(fid) for fid in profile.get("friends_list", [])]
     return FriendResponse(**profile)
-
 
 async def update_friend_profile(friend_id: str, data: FriendUpdate, user: dict) -> FriendResponse:
     try:
@@ -150,7 +175,6 @@ async def update_friend_profile(friend_id: str, data: FriendUpdate, user: dict) 
     updated["friends_list"] = [str(fid) for fid in updated.get("friends_list", [])]
     return FriendResponse(**updated)
 
-
 async def delete_friend_profile(friend_id: str, user: dict) -> dict:
     try:
         obj_id = ObjectId(friend_id)
@@ -164,7 +188,6 @@ async def delete_friend_profile(friend_id: str, user: dict) -> dict:
 
     return {"message": "🗑️ Friend profile deleted."}
 
-
 async def get_all_friend_profiles():
     cursor = friend_collection.find()
     results = []
@@ -175,26 +198,21 @@ async def get_all_friend_profiles():
         results.append(FriendResponse(**doc))
     return results
 
-
 # -----------------------------
-# Friend Requests (NEW)
+# Friend Requests
 # -----------------------------
 REQUEST_STATUSES = ("pending", "accepted", "rejected", "canceled")
 
-
 async def send_friend_request(user: dict, payload: FriendRequestSend) -> FriendRequestResponse:
-    """Auth user sends a friend request to `to_user_id`."""
     from_oid = _as_oid(str(user["_id"]))
     to_oid = _as_oid(payload.to_user_id)
 
     if from_oid == to_oid:
         raise HTTPException(status_code=400, detail="You cannot send a friend request to yourself.")
-
-    # Ensure recipient exists
     if not await _user_exists(to_oid):
         raise HTTPException(status_code=404, detail="Recipient user not found.")
 
-    # Prevent duplicate pending requests in either direction
+    # Check for existing pending either direction
     existing = await friend_requests_collection.find_one({
         "$or": [
             {"from_user_id": str(from_oid), "to_user_id": str(to_oid), "status": "pending"},
@@ -204,7 +222,7 @@ async def send_friend_request(user: dict, payload: FriendRequestSend) -> FriendR
     if existing:
         raise HTTPException(status_code=409, detail="A pending request already exists between these users.")
 
-    # Prevent sending if already accepted (already friends)
+    # Already friends?
     already = await friend_requests_collection.find_one({
         "$or": [
             {"from_user_id": str(from_oid), "to_user_id": str(to_oid), "status": "accepted"},
@@ -225,23 +243,18 @@ async def send_friend_request(user: dict, payload: FriendRequestSend) -> FriendR
     doc["id"] = str(result.inserted_id)
     return FriendRequestResponse(**doc)
 
-
 async def accept_friend_request(user: dict, payload: FriendRequestAct) -> FriendRequestResponse:
-    """Auth user accepts a request that was sent TO them."""
     req_oid = _as_oid(payload.request_id)
     me = str(user["_id"])
 
     request = await friend_requests_collection.find_one({"_id": req_oid})
     if not request:
         raise HTTPException(status_code=404, detail="Request not found.")
-
     if request["to_user_id"] != me:
         raise HTTPException(status_code=403, detail="You can only accept requests sent to you.")
-
     if request["status"] != "pending":
         raise HTTPException(status_code=400, detail=f"Cannot accept a '{request['status']}' request.")
 
-    # Transition to accepted
     await friend_requests_collection.update_one(
         {"_id": req_oid},
         {"$set": {"status": "accepted", "updated_at": datetime.utcnow()}}
@@ -251,21 +264,18 @@ async def accept_friend_request(user: dict, payload: FriendRequestAct) -> Friend
     from_id = request["from_user_id"]
     to_id = request["to_user_id"]
 
-    # For receiver (me): create profile for sender
     try:
         await create_friend_profile({"_id": to_id}, FriendCreate(friend_id=from_id))
     except HTTPException as e:
-        # ignore conflict
         if e.status_code != 409:
             raise
-    # For sender: create profile for receiver
     try:
         await create_friend_profile({"_id": from_id}, FriendCreate(friend_id=to_id))
     except HTTPException as e:
         if e.status_code != 409:
             raise
 
-    # Also keep MyPod in sync explicitly (create_friend_profile already does for the owner)
+    # MyPod sync both ways (create_friend_profile already updates owner side)
     await upsert_friend_in_mypod(to_id, from_id)
     await upsert_friend_in_mypod(from_id, to_id)
 
@@ -273,19 +283,15 @@ async def accept_friend_request(user: dict, payload: FriendRequestAct) -> Friend
     updated["id"] = str(updated["_id"])
     return FriendRequestResponse(**updated)
 
-
 async def reject_friend_request(user: dict, payload: FriendRequestAct) -> FriendRequestResponse:
-    """Auth user rejects a request that was sent TO them. No friend added."""
     req_oid = _as_oid(payload.request_id)
     me = str(user["_id"])
 
     request = await friend_requests_collection.find_one({"_id": req_oid})
     if not request:
         raise HTTPException(status_code=404, detail="Request not found.")
-
     if request["to_user_id"] != me:
         raise HTTPException(status_code=403, detail="You can only reject requests sent to you.")
-
     if request["status"] != "pending":
         raise HTTPException(status_code=400, detail=f"Cannot reject a '{request['status']}' request.")
 
@@ -298,19 +304,15 @@ async def reject_friend_request(user: dict, payload: FriendRequestAct) -> Friend
     updated["id"] = str(updated["_id"])
     return FriendRequestResponse(**updated)
 
-
 async def cancel_friend_request(user: dict, payload: FriendRequestAct) -> FriendRequestResponse:
-    """Sender cancels their own pending request."""
     req_oid = _as_oid(payload.request_id)
     me = str(user["_id"])
 
     request = await friend_requests_collection.find_one({"_id": req_oid})
     if not request:
         raise HTTPException(status_code=404, detail="Request not found.")
-
     if request["from_user_id"] != me:
         raise HTTPException(status_code=403, detail="You can only cancel requests you sent.")
-
     if request["status"] != "pending":
         raise HTTPException(status_code=400, detail=f"Cannot cancel a '{request['status']}' request.")
 
@@ -323,13 +325,10 @@ async def cancel_friend_request(user: dict, payload: FriendRequestAct) -> Friend
     updated["id"] = str(updated["_id"])
     return FriendRequestResponse(**updated)
 
-
 async def list_friend_requests(user: dict, query: FriendRequestListQuery) -> List[FriendRequestResponse]:
-    """List friend requests for the authenticated user with optional status filter and role."""
     me = str(user["_id"])
     q: dict = {}
 
-    # role: 'received' (to me) or 'sent' (by me)
     if query.role == "received":
         q["to_user_id"] = me
     elif query.role == "sent":
@@ -348,3 +347,32 @@ async def list_friend_requests(user: dict, query: FriendRequestListQuery) -> Lis
         doc["id"] = str(doc["_id"])
         out.append(FriendRequestResponse(**doc))
     return out
+
+# -----------------------------
+# UNFRIEND (NEW)
+# -----------------------------
+async def unfriend(user: dict, payload: UnfriendRequest) -> dict:
+    """
+    Remove friendship both ways:
+      - delete FriendProfile where (user_id = me, friend_id = them)
+      - delete FriendProfile where (user_id = them, friend_id = me)
+      - remove MyPod links in both directions
+    """
+    me_id = str(user["_id"])
+    friend_id = payload.friend_user_id
+    _ = _as_oid(me_id)       # validate
+    _ = _as_oid(friend_id)   # validate
+
+    if not await _user_exists(_as_oid(friend_id)):
+        raise HTTPException(status_code=404, detail="Friend user not found.")
+
+    # Delete friend profiles both ways (best-effort)
+    await friend_collection.delete_many({"user_id": me_id, "friend_id": friend_id})
+    await friend_collection.delete_many({"user_id": friend_id, "friend_id": me_id})
+
+    # Remove MyPod links both ways (best-effort)
+    await _remove_friend_in_mypod(me_id, friend_id)
+    await _remove_friend_in_mypod(friend_id, me_id)
+
+    # Keep friend_requests history (no deletion)
+    return {"message": "👋 Unfriended successfully."}
