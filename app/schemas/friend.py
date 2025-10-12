@@ -1,15 +1,14 @@
-# app/schemas/friend_schema.py
+# app/schemas/friend.py
 from pydantic import BaseModel, Field
-from typing import List, Optional
+from typing import List, Optional, Literal
 from datetime import datetime
-from bson import ObjectId
 from typing_extensions import Annotated
 from pydantic.functional_validators import BeforeValidator
 
-# Convert ObjectId to string for safe serialization
+# Converts MongoDB ObjectId to string during serialization
 PyObjectId = Annotated[str, BeforeValidator(lambda x: str(x))]
 
-# ✅ Embedded data classes
+# ---------- Embedded message types ----------
 class BackupRequest(BaseModel):
     message: Optional[str] = None
     timestamp: datetime = Field(default_factory=datetime.utcnow)
@@ -22,7 +21,7 @@ class MotivationHit(BaseModel):
     message: Optional[str] = None
     timestamp: datetime = Field(default_factory=datetime.utcnow)
 
-# ✅ Create schema
+# ---------- Main Friend Profile ----------
 class FriendCreate(BaseModel):
     friend_id: PyObjectId
     friends_list: List[PyObjectId] = Field(default_factory=list)
@@ -33,7 +32,6 @@ class FriendCreate(BaseModel):
     check_in_nudges: List[CheckInNudge] = Field(default_factory=list)
     motivation_hits: List[MotivationHit] = Field(default_factory=list)
 
-# ✅ Update schema
 class FriendUpdate(BaseModel):
     friends_list: Optional[List[PyObjectId]] = None
     friend_quit_date: Optional[datetime] = None
@@ -43,7 +41,27 @@ class FriendUpdate(BaseModel):
     check_in_nudges: Optional[List[CheckInNudge]] = None
     motivation_hits: Optional[List[MotivationHit]] = None
 
-# ✅ Response schema
 class FriendResponse(FriendCreate):
     id: str
     user_id: str
+
+# ---------- Friend Requests (NEW) ----------
+class FriendRequestSend(BaseModel):
+    to_user_id: PyObjectId
+
+class FriendRequestAct(BaseModel):
+    request_id: PyObjectId
+
+class FriendRequestListQuery(BaseModel):
+    status: Optional[Literal["pending", "accepted", "rejected", "canceled"]] = None
+    role: Optional[Literal["received", "sent", "all"]] = "all"
+    skip: int = 0
+    limit: int = 20
+
+class FriendRequestResponse(BaseModel):
+    id: str
+    from_user_id: str
+    to_user_id: str
+    status: str
+    created_at: datetime
+    updated_at: datetime

@@ -68,7 +68,6 @@ fastapi_app.include_router(legal_router)
 fastapi_app.include_router(safety_router)
 fastapi_app.include_router(moderation_admin_router)
 
-
 # ---------------------------
 # Startup tasks
 # ---------------------------

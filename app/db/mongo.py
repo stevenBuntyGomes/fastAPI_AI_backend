@@ -26,10 +26,17 @@ milestone_collection = db["milestone"]
 recovery_collection = db["recovery"]
 onboarding_collection = db["onboarding"]
 community_collection = db["community"]
-friend_collection = db["friends"]
+
+# Friend graph
+friend_collection = db["friends"]                    # stores { user_id, friend_id, ... }
+friend_requests_collection = db["friend_requests"]   # NEW: stores requests { from_user_id, to_user_id, status, ... }
 mypod_collection = db["mypods"]
+
+# Referrals
 referral_codes_collection = db["referral_codes"]
 referrals_collection = db["referrals"]
+
+# Safety/moderation
 reports_collection = db["reports"]
 blocks_collection  = db["blocks"]
 moderation_logs    = db["moderation_logs"]
@@ -63,12 +70,6 @@ async def init_db_indexes() -> None:
     # Onboarding
     await onboarding_collection.create_index("created_at")
 
-    # Referral codes / referrals
-    await referral_codes_collection.create_index("code", unique=True)
-    await referral_codes_collection.create_index([("user_id", 1)], unique=True)
-    await referrals_collection.create_index([("referee_user_id", 1)], unique=True)
-    await referrals_collection.create_index([("referrer_user_id", 1), ("applied_at", -1)])
-
     # Community (feed & updates)
     await community_collection.create_index([("post_timestamp", -1)])
     await community_collection.create_index([("post_author_id", 1)])
@@ -84,3 +85,42 @@ async def init_db_indexes() -> None:
     # Moderation logs (align with fields you actually write)
     await moderation_logs.create_index([("admin_id", 1), ("created_at", -1)])
     await moderation_logs.create_index([("report_id", 1)])
+
+    # ==============================
+    # Friend graph (NEW indexes)
+    # ==============================
+
+    # Friend Profiles — prevent duplicates per owner and speed lookups
+    # NOTE: your documents include `friend_id` (created via FriendCreate), so this is valid.
+    await friend_collection.create_index(
+        [("user_id", 1), ("friend_id", 1)],
+        unique=True,
+        name="user_friend_unique",
+    )
+    # Helpful for listing your friends fast (GET /friend)
+    await friend_collection.create_index(
+        [("user_id", 1), ("created_at", -1)],
+        name="user_createdAt_desc",
+    )
+
+    # Friend Requests — fast pair/status checks & inbox/outbox lists
+    await friend_requests_collection.create_index(
+        [("from_user_id", 1), ("to_user_id", 1), ("status", 1)],
+        name="request_pair_status",
+    )
+    await friend_requests_collection.create_index(
+        [("to_user_id", 1), ("status", 1), ("created_at", -1)],
+        name="to_status_createdAt_desc",
+    )
+    await friend_requests_collection.create_index(
+        [("from_user_id", 1), ("status", 1), ("created_at", -1)],
+        name="from_status_createdAt_desc",
+    )
+
+    # If later you choose DB-enforced "only one pending per pair", add:
+    # await friend_requests_collection.create_index(
+    #     [("pair_key", 1)],
+    #     unique=True,
+    #     partialFilterExpression={"status": "pending"},
+    #     name="unique_pending_per_pair",
+    # )

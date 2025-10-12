@@ -24,6 +24,9 @@ from ..controllers.auth_controller import (
     # Search
     search_users_by_name_or_id,
     delete_account,
+
+    # NEW
+    link_onboarding_to_user,
 )
 
 from ..schemas.auth_schema import (
@@ -34,6 +37,7 @@ from ..schemas.auth_schema import (
     AppleLoginRequest,
     AddAuraRequest,
     LoginStreakSetRequest,
+    OnboardingLinkRequest,
 
     # Responses
     AuthResponse,
@@ -41,6 +45,7 @@ from ..schemas.auth_schema import (
     AuraUpdateResponse,
     LoginStreakUpdateResponse,
     DeleteAccountResponse,
+    OnboardingLinkResponse,
 )
 
 from ..schemas.onboarding_schema import OnboardingOut
@@ -62,7 +67,10 @@ async def send_code(email: EmailStr = Body(..., embed=True)):
 
 @router.post("/register", response_model=AuthResponse, summary="Register user after verifying email")
 async def register_user(payload: RegisterRequest):
-    """Verify code, create user, and return JWT + user."""
+    """
+    Verify code, create user, and return JWT + user.
+    NOTE: onboarding_id is OPTIONAL for email registration.
+    """
     return await verify_email_and_register(
         email=payload.email,
         code=payload.code,
@@ -107,6 +115,27 @@ async def get_onboarding_via_auth(onboarding_id: str):
     """Fetch onboarding document by id."""
     return await fetch_onboarding_by_id(onboarding_id)
 
+# NEW: Link onboarding to a user after login/registration
+@router.post(
+    "/onboarding-user",
+    response_model=OnboardingLinkResponse,
+    summary="Link onboarding_id to the authenticated user (expects user_id & onboarding_id)",
+)
+async def link_onboarding_user(
+    payload: OnboardingLinkRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    The client may register/login BEFORE onboarding. This endpoint allows the app to later
+    associate an onboarding document with the authenticated user.
+
+    Rules:
+      - Caller must be authenticated
+      - payload.user_id MUST match the authenticated user's id
+      - onboarding_id must exist
+    """
+    user = await link_onboarding_to_user(payload.user_id, payload.onboarding_id, current_user)
+    return OnboardingLinkResponse(user=user)
 
 # ---------------------
 # Authenticated helpers
@@ -165,7 +194,6 @@ async def search_users(
     )
 
 
-
 @router.get("/user/{user_id}", response_model=UserOut, summary="Get a user by id")
 async def get_user(user_id: str, current_user: dict = Depends(get_current_user)):
     """
@@ -191,4 +219,3 @@ async def delete_user_account(user_id: str, current_user: dict = Depends(get_cur
     """
     # TODO: enforce admin authorization here
     return await delete_account(user_id)
-

@@ -17,7 +17,7 @@ class RegisterRequest(BaseModel):
     name: str
     password: str
     login_streak: int = 0
-    onboarding_id: str  # ← NEW: frontend sends onboarding_id created earlier
+    onboarding_id: Optional[str] = None  # ← NOW OPTIONAL for email registration
 
 class LoginRequest(BaseModel):
     email: EmailStr
@@ -31,6 +31,10 @@ class AppleLoginRequest(BaseModel):
     identity_token: str
     onboarding_id: Optional[str] = None  # optional for first-time users
 
+# NEW: link onboarding to a user after auth
+class OnboardingLinkRequest(BaseModel):
+    user_id: str
+    onboarding_id: str
 
 # ✅ Response Schemas
 class UserOut(BaseModel):
@@ -39,7 +43,7 @@ class UserOut(BaseModel):
     name: Optional[str]
     aura: int = 0
     login_streak: int = 0
-    onboarding_id: Optional[PyObjectId] = None  # ← include onboarding_id in responses
+    onboarding_id: Optional[PyObjectId] = None  # include onboarding_id
 
 class AuthResponse(BaseModel):
     token: str
@@ -66,3 +70,8 @@ class AuraUpdateResponse(BaseModel):
 class DeleteAccountResponse(BaseModel):
     message: str
     deleted_user_id: Optional[PyObjectId] = None
+
+# NEW: explicit response when linking onboarding
+class OnboardingLinkResponse(BaseModel):
+    message: str = "✅ Onboarding linked"
+    user: UserOut

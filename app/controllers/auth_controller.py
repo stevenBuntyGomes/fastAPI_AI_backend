@@ -35,14 +35,14 @@ async def send_verification_code(email: EmailStr):
     return {"message": "📧 Verification code sent."}
 
 # -----------------------
-# STEP 2: Register (with onboarding_id provided by frontend)
+# STEP 2: Register (onboarding_id is OPTIONAL here)
 # -----------------------
 async def verify_email_and_register(
     email: EmailStr,
     code: str,
     name: str,
     password: str,
-    onboarding_id: str,
+    onboarding_id: Optional[str] = None,
 ) -> AuthResponse:
     record = await verification_codes_collection.find_one({"email": email})
     if not record or record.get("code") != code:
@@ -52,14 +52,15 @@ async def verify_email_and_register(
     if await users_collection.find_one({"email": email}):
         raise HTTPException(status_code=400, detail="⚠️ User already exists.")
 
-    try:
-        ob_id = ObjectId(onboarding_id)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid onboarding_id format")
-
-    onboarding_doc = await onboarding_collection.find_one({"_id": ob_id})
-    if not onboarding_doc:
-        raise HTTPException(status_code=400, detail="onboarding_id does not exist")
+    # Validate onboarding_id only if provided
+    ob_obj: Optional[ObjectId] = None
+    if onboarding_id:
+        try:
+            ob_obj = ObjectId(onboarding_id)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid onboarding_id format")
+        if not await onboarding_collection.find_one({"_id": ob_obj}):
+            raise HTTPException(status_code=400, detail="onboarding_id does not exist")
 
     hashed_pw = hash_password(password)
     result = await users_collection.insert_one(
@@ -69,8 +70,8 @@ async def verify_email_and_register(
             "password": hashed_pw,
             "auth_provider": "email",
             "aura": 0,
-            "login_streak": 0,  # ✅ initialize
-            "onboarding_id": ob_id,
+            "login_streak": 0,
+            "onboarding_id": ob_obj,              # may be None
             "created_at": datetime.utcnow(),
             "updated_at": datetime.utcnow(),
         }
@@ -84,7 +85,7 @@ async def verify_email_and_register(
         name=name,
         aura=0,
         login_streak=0,
-        onboarding_id=onboarding_id,
+        onboarding_id=str(ob_obj) if ob_obj else None,
     )
     token = create_jwt_token({"user_id": str(result.inserted_id)})
     return AuthResponse(token=token, user=user_out)
@@ -97,13 +98,13 @@ async def login_with_email_password(email: EmailStr, password: str) -> AuthRespo
     if not user_dict or not verify_password(password, user_dict.get("password", "")):
         raise HTTPException(status_code=401, detail="❌ Invalid credentials.")
 
-    user = UserModel(**user_dict)  # for typed fields you already use
+    user = UserModel(**user_dict)
     user_out = UserOut(
         id=str(user.id) if user.id else None,
         email=user.email,
         name=user.name,
         aura=int(user_dict.get("aura") or 0),
-        login_streak=int(user_dict.get("login_streak") or 0),  # ✅ include streak
+        login_streak=int(user_dict.get("login_streak") or 0),
         onboarding_id=str(user_dict.get("onboarding_id")) if user_dict.get("onboarding_id") else None,
     )
     token = create_jwt_token({"user_id": str(user.id)})
@@ -137,7 +138,7 @@ async def login_with_google(token_id: str, onboarding_id: Optional[str] = None) 
                 "name": name,
                 "auth_provider": "google",
                 "aura": 0,
-                "login_streak": 0,  # ✅ initialize
+                "login_streak": 0,
                 "onboarding_id": ob_obj,
                 "created_at": datetime.utcnow(),
                 "updated_at": datetime.utcnow(),
@@ -168,7 +169,7 @@ async def login_with_google(token_id: str, onboarding_id: Optional[str] = None) 
         email=user["email"],
         name=user.get("name"),
         aura=int(user.get("aura") or 0),
-        login_streak=int(user.get("login_streak") or 0),  # ✅ include streak
+        login_streak=int(user.get("login_streak") or 0),
         onboarding_id=str(user.get("onboarding_id")) if user.get("onboarding_id") else None,
     )
     return AuthResponse(token=token, user=user_out)
@@ -210,7 +211,7 @@ async def login_with_apple(identity_token: str, onboarding_id: Optional[str] = N
                 "name": name,
                 "auth_provider": "apple",
                 "aura": 0,
-                "login_streak": 0,  # ✅ initialize
+                "login_streak": 0,
                 "onboarding_id": ob_obj,
                 "created_at": datetime.utcnow(),
                 "updated_at": datetime.utcnow(),
@@ -241,7 +242,7 @@ async def login_with_apple(identity_token: str, onboarding_id: Optional[str] = N
         email=user["email"],
         name=user.get("name"),
         aura=int(user.get("aura") or 0),
-        login_streak=int(user.get("login_streak") or 0),  # ✅ include streak
+        login_streak=int(user.get("login_streak") or 0),
         onboarding_id=str(user.get("onboarding_id")) if user.get("onboarding_id") else None,
     )
     return AuthResponse(token=token, user=user_out)
@@ -395,7 +396,6 @@ async def search_users_by_name_or_id(
     limit = max(1, min(limit, 50))
     skip = max(0, skip)
 
-    # Normalize current user's id (string or ObjectId -> ObjectId)
     cur_oid: Optional[ObjectId] = None
     try:
         if current_user and current_user.get("_id"):
@@ -405,10 +405,9 @@ async def search_users_by_name_or_id(
 
     projection = {"email": 1, "name": 1, "aura": 1, "login_streak": 1, "onboarding_id": 1}
 
-    # --- Mode A: exact _id match ---
+    # Mode A: exact _id match
     if ObjectId.is_valid(q):
         oid = ObjectId(q)
-        # Respect exclude_self
         if exclude_self and cur_oid and cur_oid == oid:
             return []
         doc = await users_collection.find_one({"_id": oid}, projection)
@@ -425,7 +424,7 @@ async def search_users_by_name_or_id(
             )
         ]
 
-    # --- Mode B: name substring search (case-insensitive) ---
+    # Mode B: name substring search
     name_regex = {"$regex": re.escape(q), "$options": "i"}
     name_query: dict = {"name": name_regex}
     if exclude_self and cur_oid:
@@ -456,10 +455,6 @@ async def search_users_by_name_or_id(
 # Utility: compute login streak from progress (distinct days)
 # -----------------------
 async def _compute_login_streak_from_progress(user_id_str: str) -> int:
-    """
-    Count DISTINCT calendar days in progress.days_tracked for this user.
-    Accepts both datetime objects and ISO strings in the array.
-    """
     progress = await progress_collection.find_one({"user_id": user_id_str}, {"days_tracked": 1})
     if not progress or not progress.get("days_tracked"):
         return 0
@@ -507,7 +502,7 @@ async def set_login_streak(current_user: dict, login_streak: int):
         email=updated.get("email"),
         name=updated.get("name"),
         aura=int(updated.get("aura") or 0),
-        login_streak=int(updated.get("login_streak") or 0),  # ← your new value
+        login_streak=int(updated.get("login_streak") or 0),
         onboarding_id=str(updated.get("onboarding_id")) if updated.get("onboarding_id") else None,
     )
 
@@ -517,12 +512,6 @@ async def set_login_streak(current_user: dict, login_streak: int):
 # Delete Account (hard delete)
 # -----------------------
 async def delete_account(user_id: str):
-    """
-    Hard-deletes the user's account and related data we own:
-      - recovery_collection (by user_id)
-      - progress_collection (by user_id)
-      - users_collection (by _id)
-    """
     try:
         oid = ObjectId(user_id)
     except Exception:
@@ -535,7 +524,61 @@ async def delete_account(user_id: str):
     if res.deleted_count == 0:
         raise HTTPException(status_code=404, detail="User not found")
 
-    # Best-effort cleanup of verification codes tied to any email (optional)
     await verification_codes_collection.delete_many({"email": {"$exists": True}})
 
     return {"message": "✅ Account and related data deleted.", "deleted_user_id": str(oid)}
+
+# -----------------------
+# NEW: Link onboarding_id to a user (post-login/onboarding)
+# -----------------------
+async def link_onboarding_to_user(user_id: str, onboarding_id: str, current_user: dict) -> UserOut:
+    """
+    Ensures the caller is authenticated AND matches the provided user_id,
+    validates the onboarding_id exists, then saves it on that user.
+    """
+    # Auth check
+    auth_id = current_user.get("_id")
+    if not auth_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    # Normalize to ObjectIds and verify match
+    try:
+        auth_oid = ObjectId(str(auth_id))
+        req_oid = ObjectId(user_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid user_id format")
+
+    if auth_oid != req_oid:
+        raise HTTPException(status_code=403, detail="Forbidden: user_id does not match the authenticated user")
+
+    # Validate onboarding id
+    try:
+        ob_oid = ObjectId(onboarding_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid onboarding_id format")
+
+    onboarding_doc = await onboarding_collection.find_one({"_id": ob_oid})
+    if not onboarding_doc:
+        raise HTTPException(status_code=404, detail="Onboarding not found")
+
+    # Update user's onboarding_id
+    res = await users_collection.update_one(
+        {"_id": req_oid},
+        {"$set": {"onboarding_id": ob_oid, "updated_at": datetime.utcnow()}},
+    )
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Return updated user
+    updated = await users_collection.find_one(
+        {"_id": req_oid},
+        {"email": 1, "name": 1, "aura": 1, "login_streak": 1, "onboarding_id": 1},
+    )
+    return UserOut(
+        id=str(updated["_id"]),
+        email=updated.get("email"),
+        name=updated.get("name"),
+        aura=int(updated.get("aura") or 0),
+        login_streak=int(updated.get("login_streak") or 0),
+        onboarding_id=str(updated.get("onboarding_id")) if updated.get("onboarding_id") else None,
+    )
