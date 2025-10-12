@@ -117,7 +117,7 @@ async def get_onboarding_via_auth(onboarding_id: str):
 
 # NEW: Link onboarding to a user after login/registration
 @router.post(
-    "/onboarding-user",
+    "/onboarding_user",
     response_model=OnboardingLinkResponse,
     summary="Link onboarding_id to the authenticated user (expects user_id & onboarding_id)",
 )

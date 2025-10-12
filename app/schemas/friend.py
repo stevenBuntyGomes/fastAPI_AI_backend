@@ -65,3 +65,6 @@ class FriendRequestResponse(BaseModel):
     status: str
     created_at: datetime
     updated_at: datetime
+
+class UnfriendRequest(BaseModel):
+    friend_user_id: PyObjectId
