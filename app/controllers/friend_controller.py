@@ -1,6 +1,6 @@
 # app/controllers/friend_controller.py
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Dict
 from bson import ObjectId
 from fastapi import HTTPException
 
@@ -11,17 +11,22 @@ from ..schemas.friend import (
     FriendRequestSend,
     FriendRequestAct,
     FriendRequestListQuery,
-    FriendRequestResponse,
+    FriendRequestResponse,        # (still used for send/accept/reject/cancel return shapes if needed)
+    FriendRequestResponseFull,    # populated from_user / to_user
+    FriendResponsePopulated,      # populated friends_list
     UnfriendRequest,
 )
+from ..schemas.auth_schema import UserOut  # reuse normalized user shape
+
 from ..db.mongo import (
     friend_collection,
-    friend_requests_collection,   # <-- REQUIRED for requests
+    friend_requests_collection,   # <-- required collection for friend requests
     users_collection,
     mypod_collection,
     recovery_collection,
 )
 from .mypod_controller import upsert_friend_in_mypod  # keep existing wiring
+
 
 # -----------------------------
 # Helpers
@@ -77,6 +82,36 @@ async def _remove_friend_in_mypod(owner_user_id: str, friend_user_id: str) -> No
     except HTTPException:
         pass
 
+async def _build_user_out(user_doc: dict) -> UserOut:
+    """Normalize a users_collection doc into UserOut."""
+    return UserOut(
+        id=str(user_doc["_id"]),
+        email=user_doc.get("email"),
+        name=user_doc.get("name"),
+        aura=int(user_doc.get("aura") or 0),
+        login_streak=int(user_doc.get("login_streak") or 0),
+        onboarding_id=str(user_doc.get("onboarding_id")) if user_doc.get("onboarding_id") else None,
+    )
+
+async def _fetch_users_map_by_ids(id_strs: List[str]) -> Dict[str, UserOut]:
+    """
+    Batch fetch users by string ids and return {id_str: UserOut}.
+    Ignores invalid ObjectId strings.
+    """
+    oids: List[ObjectId] = []
+    for s in id_strs:
+        if ObjectId.is_valid(s):
+            oids.append(ObjectId(s))
+    if not oids:
+        return {}
+    projection = {"email": 1, "name": 1, "aura": 1, "login_streak": 1, "onboarding_id": 1}
+    cursor = users_collection.find({"_id": {"$in": oids}}, projection)
+    out: Dict[str, UserOut] = {}
+    async for u in cursor:
+        out[str(u["_id"])] = await _build_user_out(u)
+    return out
+
+
 # -----------------------------
 # Friend Profile (existing)
 # -----------------------------
@@ -115,7 +150,7 @@ async def create_friend_profile(user: dict, data: FriendCreate) -> FriendRespons
         result = await friend_collection.insert_one(body)
     except Exception as e:
         if "E11000" in str(e):
-            # Unique (user_id, friend_id) index will throw this; treat as already exists
+            # Unique (user_id, friend_id) index would throw this; treat as already exists
             raise HTTPException(status_code=409, detail="Friend profile already exists.")
         raise
 
@@ -188,15 +223,47 @@ async def delete_friend_profile(friend_id: str, user: dict) -> dict:
 
     return {"message": "🗑️ Friend profile deleted."}
 
-async def get_all_friend_profiles():
+# ---------- UPDATED: Admin/diagnostic (populated friends_list) ----------
+async def get_all_friend_profiles() -> List[FriendResponsePopulated]:
+    """
+    Return all friend profiles with friends_list populated to full UserOut objects.
+    """
     cursor = friend_collection.find()
-    results = []
+    results: List[FriendResponsePopulated] = []
+
     async for doc in cursor:
-        doc["id"] = str(doc["_id"])
-        doc["user_id"] = str(doc["user_id"])
-        doc["friends_list"] = [str(fid) for fid in doc.get("friends_list", [])]
-        results.append(FriendResponse(**doc))
+        # Normalize base fields
+        base = {
+            "id": str(doc["_id"]),
+            "user_id": str(doc.get("user_id")),
+            "friend_id": str(doc.get("friend_id")) if doc.get("friend_id") else None,
+            "friend_quit_date": doc.get("friend_quit_date"),
+            "friend_login_streak": int(doc.get("friend_login_streak") or 0),
+            "friend_aura": int(doc.get("friend_aura") or 0),
+            "backup_requests": doc.get("backup_requests", []) or [],
+            "check_in_nudges": doc.get("check_in_nudges", []) or [],
+            "motivation_hits": doc.get("motivation_hits", []) or [],
+            "created_at": doc.get("created_at"),
+            "updated_at": doc.get("updated_at"),
+        }
+
+        # Extract friend IDs (robust to shapes)
+        raw_list = doc.get("friends_list", []) or []
+        friend_id_strs: List[str] = []
+        for item in raw_list:
+            if isinstance(item, dict) and "friend_id" in item:
+                friend_id_strs.append(str(item["friend_id"]))
+            else:
+                friend_id_strs.append(str(item))
+
+        # Batch load users for this profile
+        users_map = await _fetch_users_map_by_ids(friend_id_strs)
+        populated = [users_map[i] for i in friend_id_strs if i in users_map]
+
+        results.append(FriendResponsePopulated(friends_list=populated, **base))
+
     return results
+
 
 # -----------------------------
 # Friend Requests
@@ -241,6 +308,7 @@ async def send_friend_request(user: dict, payload: FriendRequestSend) -> FriendR
     }
     result = await friend_requests_collection.insert_one(doc)
     doc["id"] = str(result.inserted_id)
+    # Minimal response for send (IDs); if you prefer full users here too, swap to FriendRequestResponseFull
     return FriendRequestResponse(**doc)
 
 async def accept_friend_request(user: dict, payload: FriendRequestAct) -> FriendRequestResponse:
@@ -325,7 +393,8 @@ async def cancel_friend_request(user: dict, payload: FriendRequestAct) -> Friend
     updated["id"] = str(updated["_id"])
     return FriendRequestResponse(**updated)
 
-async def list_friend_requests(user: dict, query: FriendRequestListQuery) -> List[FriendRequestResponse]:
+# ---------- UPDATED: populated from_user / to_user ----------
+async def list_friend_requests(user: dict, query: FriendRequestListQuery) -> List[FriendRequestResponseFull]:
     me = str(user["_id"])
     q: dict = {}
 
@@ -342,11 +411,37 @@ async def list_friend_requests(user: dict, query: FriendRequestListQuery) -> Lis
         q["status"] = query.status
 
     cursor = friend_requests_collection.find(q).sort("created_at", -1).skip(query.skip).limit(query.limit)
-    out: List[FriendRequestResponse] = []
-    async for doc in cursor:
-        doc["id"] = str(doc["_id"])
-        out.append(FriendRequestResponse(**doc))
+
+    # Materialize docs to collect unique user IDs
+    docs = []
+    id_set = set()
+    async for d in cursor:
+        docs.append(d)
+        id_set.add(str(d.get("from_user_id")))
+        id_set.add(str(d.get("to_user_id")))
+
+    users_map = await _fetch_users_map_by_ids(list(id_set))
+
+    out: List[FriendRequestResponseFull] = []
+    for d in docs:
+        from_id = str(d.get("from_user_id"))
+        to_id = str(d.get("to_user_id"))
+        # Guard against missing users (deleted accounts, etc.)
+        if from_id not in users_map or to_id not in users_map:
+            # Skip to avoid server error in listings when a referenced user is gone
+            continue
+        out.append(
+            FriendRequestResponseFull(
+                id=str(d["_id"]),
+                from_user=users_map[from_id],
+                to_user=users_map[to_id],
+                status=d.get("status"),
+                created_at=d.get("created_at"),
+                updated_at=d.get("updated_at"),
+            )
+        )
     return out
+
 
 # -----------------------------
 # UNFRIEND (NEW)
