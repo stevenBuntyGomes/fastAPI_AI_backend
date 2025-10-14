@@ -18,6 +18,7 @@ from ..db.mongo import (
 from ..utils.auth_utils import (
     get_current_user,
     get_current_admin_user,
+    get_moderation_admin_user,
 )
 
 router = APIRouter(prefix="/safety", tags=["Safety"])
@@ -176,7 +177,7 @@ async def unblock_user(payload: BlockRequest, user=Depends(get_current_user)):
 # Admin dashboard endpoints
 # -----------------------------
 @router.get("/admin/flagged/users")
-async def list_flagged_users(admin=Depends(get_current_admin_user)):
+async def list_flagged_users(admin=Depends(get_moderation_admin_user)):
     """
     Returns one row per user who has open reports (any content type),
     aggregating reasons and counts.
@@ -205,7 +206,7 @@ async def list_flagged_users(admin=Depends(get_current_admin_user)):
 
 
 @router.get("/admin/flagged/posts")
-async def list_flagged_posts(admin=Depends(get_current_admin_user)):
+async def list_flagged_posts(admin=Depends(get_moderation_admin_user)):
     """
     One row per post that has open reports.
     """
@@ -235,7 +236,7 @@ async def list_flagged_posts(admin=Depends(get_current_admin_user)):
 
 
 @router.get("/admin/flagged/comments")
-async def list_flagged_comments(admin=Depends(get_current_admin_user)):
+async def list_flagged_comments(admin=Depends(get_moderation_admin_user)):
     """
     One row per comment that has open reports.
     Returns: comment_id, post_id, author_id, reasons, reports, last_report_at
@@ -279,7 +280,7 @@ async def list_flagged_comments(admin=Depends(get_current_admin_user)):
 
 
 @router.post("/admin/remove-flag")
-async def remove_flag(payload: RemoveFlagRequest, admin=Depends(get_current_admin_user)):
+async def remove_flag(payload: RemoveFlagRequest, admin=Depends(get_moderation_admin_user)):
     """
     Dismiss all OPEN reports for the given item and unhide/clear flags.
     UI button label in your screenshots is 'Remove' — this implements that action.

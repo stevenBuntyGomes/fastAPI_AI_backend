@@ -19,6 +19,14 @@ from ..db.mongo import users_collection
 SECRET_KEY = os.getenv("JWT_SECRET_KEY") or os.getenv("JWT_SECRET") or ""
 ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 
+# Allowlist for Safety moderation admin (IDs or emails). If set, ONLY these can access.
+_SAFETY_ADMIN_USER_IDS = {
+    s.strip() for s in (os.getenv("SAFETY_ADMIN_USER_IDS", "") or "").split(",") if s.strip()
+}
+_SAFETY_ADMIN_EMAILS = {
+    s.strip().lower() for s in (os.getenv("SAFETY_ADMIN_EMAILS", "") or "").split(",") if s.strip()
+}
+
 # Bearer scheme for typical HTTP routes
 bearer_scheme = HTTPBearer(auto_error=True)
 # Optional bearer (won't auto-raise) for endpoints where auth is optional
@@ -119,3 +127,37 @@ async def get_optional_user(
         return await _load_user_or_401(user_id)
     except Exception:
         return None
+
+
+# ------------------------------------------------------------------
+# Strict Safety-admin helpers (for Safety routes only)
+# ------------------------------------------------------------------
+def _is_safety_admin(user: dict) -> bool:
+    """
+    If SAFETY_ADMIN_* env vars are set, enforce a hard allowlist.
+    Otherwise, fall back to the normal admin rule (role=='admin' or is_admin==True).
+    """
+    if _SAFETY_ADMIN_USER_IDS or _SAFETY_ADMIN_EMAILS:
+        if str(user.get("_id")) in _SAFETY_ADMIN_USER_IDS:
+            return True
+        email = (user.get("email") or "").lower()
+        if email and email in _SAFETY_ADMIN_EMAILS:
+            return True
+        return False
+
+    # No allowlist configured => default admin rule
+    return (user.get("role") == "admin") or (user.get("is_admin") is True)
+
+
+async def get_moderation_admin_user(
+    credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
+):
+    """
+    STRICT admin for Safety routes.
+    - If allowlist envs are set, only those users can pass.
+    - Else: same behavior as get_current_admin_user.
+    """
+    user = await get_current_user(credentials)
+    if not _is_safety_admin(user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin only.")
+    return user
