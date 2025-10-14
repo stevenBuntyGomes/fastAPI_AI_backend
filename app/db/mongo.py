@@ -46,7 +46,10 @@ moderation_logs    = db["moderation_logs"]
 async def init_db_indexes() -> None:
     # Users: unique email
     await users_collection.create_index("email", unique=True)
+    # Users moderation lookups (optional but recommended)
     await users_collection.create_index("is_flagged")
+    await users_collection.create_index("is_banned")
+    await users_collection.create_index([("is_suspended", 1), ("suspended_until", -1)])
 
     # Map user -> sockets quickly
     await socket_sessions_collection.create_index([("user_id", 1)])
