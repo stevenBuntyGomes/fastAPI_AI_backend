@@ -112,6 +112,52 @@ async def _fetch_users_map_by_ids(id_strs: List[str]) -> Dict[str, UserOut]:
     return out
 
 
+
+# --- Friend-list helpers for friend_collection ---
+
+async def _add_to_friendlist(owner_user_id: str, friend_user_id: str) -> None:
+    """
+    Ensure owner.user_id's FriendProfile docs include friend_user_id in friends_list.
+    - Normalizes to string storage.
+    - De-dupes (addToSet).
+    - Cleans up any legacy ObjectId entries first.
+    """
+    # 1) Pull legacy ObjectId-form if present
+    pull_vals = []
+    try:
+        pull_vals.append(_as_oid(friend_user_id))
+    except HTTPException:
+        pass
+    if pull_vals:
+        await friend_collection.update_many(
+            {"user_id": owner_user_id},
+            {"$pull": {"friends_list": {"$in": pull_vals}}}
+        )
+
+    # 2) Add string form exactly once
+    await friend_collection.update_many(
+        {"user_id": owner_user_id},
+        {"$addToSet": {"friends_list": str(friend_user_id)}, "$set": {"updated_at": datetime.utcnow()}}
+    )
+
+
+async def _remove_from_friendlist(owner_user_id: str, friend_user_id: str) -> None:
+    """
+    Remove friend_user_id from all of owner's FriendProfile.friends_list (all shapes).
+    """
+    pull_vals = [str(friend_user_id)]
+    try:
+        pull_vals.append(_as_oid(friend_user_id))
+    except HTTPException:
+        pass
+
+    await friend_collection.update_many(
+        {"user_id": owner_user_id},
+        {"$pull": {"friends_list": {"$in": pull_vals}}, "$set": {"updated_at": datetime.utcnow()}}
+    )
+
+
+
 # -----------------------------
 # Friend Profile (existing)
 # -----------------------------
@@ -323,12 +369,7 @@ async def accept_friend_request(user: dict, payload: FriendRequestAct) -> Friend
     if request["status"] != "pending":
         raise HTTPException(status_code=400, detail=f"Cannot accept a '{request['status']}' request.")
 
-    await friend_requests_collection.update_one(
-        {"_id": req_oid},
-        {"$set": {"status": "accepted", "updated_at": datetime.utcnow()}}
-    )
-
-    # On accept: create FriendProfile for both sides (idempotent)
+    # Create FriendProfile for both sides (idempotent)
     from_id = request["from_user_id"]
     to_id = request["to_user_id"]
 
@@ -343,13 +384,28 @@ async def accept_friend_request(user: dict, payload: FriendRequestAct) -> Friend
         if e.status_code != 409:
             raise
 
-    # MyPod sync both ways (create_friend_profile already updates owner side)
+    # Sync MyPod both ways
     await upsert_friend_in_mypod(to_id, from_id)
     await upsert_friend_in_mypod(from_id, to_id)
 
-    updated = await friend_requests_collection.find_one({"_id": req_oid})
-    updated["id"] = str(updated["_id"])
-    return FriendRequestResponse(**updated)
+    # ✅ Also sync friend_collection.friends_list both ways
+    await _add_to_friendlist(to_id, from_id)
+    await _add_to_friendlist(from_id, to_id)
+
+    # Build response and delete the request (no status retained in DB)
+    now = datetime.utcnow()
+    response_doc = {
+        "id": str(request["_id"]),
+        "from_user_id": from_id,
+        "to_user_id": to_id,
+        "status": "accepted",
+        "created_at": request.get("created_at"),
+        "updated_at": now,
+    }
+    await friend_requests_collection.delete_one({"_id": req_oid})
+
+    return FriendRequestResponse(**response_doc)
+
 
 async def reject_friend_request(user: dict, payload: FriendRequestAct) -> FriendRequestResponse:
     req_oid = _as_oid(payload.request_id)
@@ -363,14 +419,21 @@ async def reject_friend_request(user: dict, payload: FriendRequestAct) -> Friend
     if request["status"] != "pending":
         raise HTTPException(status_code=400, detail=f"Cannot reject a '{request['status']}' request.")
 
-    await friend_requests_collection.update_one(
-        {"_id": req_oid},
-        {"$set": {"status": "rejected", "updated_at": datetime.utcnow()}}
-    )
+    # Build response using original doc, but mark as rejected and remove the request
+    now = datetime.utcnow()
+    response_doc = {
+        "id": str(request["_id"]),
+        "from_user_id": request["from_user_id"],
+        "to_user_id": request["to_user_id"],
+        "status": "rejected",
+        "created_at": request.get("created_at"),
+        "updated_at": now,
+    }
 
-    updated = await friend_requests_collection.find_one({"_id": req_oid})
-    updated["id"] = str(updated["_id"])
-    return FriendRequestResponse(**updated)
+    # Permanently delete the request (no status update kept)
+    await friend_requests_collection.delete_one({"_id": req_oid})
+
+    return FriendRequestResponse(**response_doc)
 
 async def cancel_friend_request(user: dict, payload: FriendRequestAct) -> FriendRequestResponse:
     req_oid = _as_oid(payload.request_id)
@@ -384,14 +447,22 @@ async def cancel_friend_request(user: dict, payload: FriendRequestAct) -> Friend
     if request["status"] != "pending":
         raise HTTPException(status_code=400, detail=f"Cannot cancel a '{request['status']}' request.")
 
-    await friend_requests_collection.update_one(
-        {"_id": req_oid},
-        {"$set": {"status": "canceled", "updated_at": datetime.utcnow()}}
-    )
+    # Build response using original doc, but mark as canceled and remove the request
+    now = datetime.utcnow()
+    response_doc = {
+        "id": str(request["_id"]),
+        "from_user_id": request["from_user_id"],
+        "to_user_id": request["to_user_id"],
+        "status": "canceled",
+        "created_at": request.get("created_at"),
+        "updated_at": now,
+    }
 
-    updated = await friend_requests_collection.find_one({"_id": req_oid})
-    updated["id"] = str(updated["_id"])
-    return FriendRequestResponse(**updated)
+    # Permanently delete the request (no status kept)
+    await friend_requests_collection.delete_one({"_id": req_oid})
+
+    return FriendRequestResponse(**response_doc)
+
 
 # ---------- UPDATED: populated from_user / to_user ----------
 async def list_friend_requests(user: dict, query: FriendRequestListQuery) -> List[FriendRequestResponseFull]:
@@ -447,12 +518,6 @@ async def list_friend_requests(user: dict, query: FriendRequestListQuery) -> Lis
 # UNFRIEND (NEW)
 # -----------------------------
 async def unfriend(user: dict, payload: UnfriendRequest) -> dict:
-    """
-    Remove friendship both ways:
-      - delete FriendProfile where (user_id = me, friend_id = them)
-      - delete FriendProfile where (user_id = them, friend_id = me)
-      - remove MyPod links in both directions
-    """
     me_id = str(user["_id"])
     friend_id = payload.friend_user_id
     _ = _as_oid(me_id)       # validate
@@ -461,13 +526,17 @@ async def unfriend(user: dict, payload: UnfriendRequest) -> dict:
     if not await _user_exists(_as_oid(friend_id)):
         raise HTTPException(status_code=404, detail="Friend user not found.")
 
-    # Delete friend profiles both ways (best-effort)
+    # Delete friend profiles both ways
     await friend_collection.delete_many({"user_id": me_id, "friend_id": friend_id})
     await friend_collection.delete_many({"user_id": friend_id, "friend_id": me_id})
 
-    # Remove MyPod links both ways (best-effort)
+    # ✅ Remove from friend_collection.friends_list both ways
+    await _remove_from_friendlist(me_id, friend_id)
+    await _remove_from_friendlist(friend_id, me_id)
+
+    # Remove MyPod links both ways
     await _remove_friend_in_mypod(me_id, friend_id)
     await _remove_friend_in_mypod(friend_id, me_id)
 
-    # Keep friend_requests history (no deletion)
     return {"message": "👋 Unfriended successfully."}
+
