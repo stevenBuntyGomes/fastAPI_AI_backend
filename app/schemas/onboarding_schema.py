@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, field_validator, field_serializer, ConfigDict
+from pydantic import BaseModel, Field, field_validator, field_serializer, model_validator, ConfigDict
 from typing import Optional, Literal
 from datetime import datetime, timezone
 
@@ -9,16 +9,19 @@ QuitAttempts    = Literal["yes", "no", "many"]
 Gender          = Literal["male", "female", "non-binary", "prefer not to say"]
 
 
-# ----- Base: normalize enum-ish strings to lowercase -----
+# ----- Base: normalize enum-ish strings to lowercase (model-level, safe in v2) -----
 class _EnumNormaliser(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    @field_validator("vaping_frequency", "hides_vaping", "quit_attempts", "gender", mode="before")
+    @model_validator(mode="before")
     @classmethod
-    def _lower_enums(cls, v):
-        if isinstance(v, str):
-            return v.strip().lower()
-        return v
+    def _lower_enums(cls, values):
+        if isinstance(values, dict):
+            for k in ("vaping_frequency", "hides_vaping", "quit_attempts", "gender"):
+                v = values.get(k)
+                if isinstance(v, str):
+                    values[k] = v.strip().lower()
+        return values
 
 
 # ----- Request schema -----
@@ -45,9 +48,9 @@ class OnboardingRequest(_EnumNormaliser):
     @classmethod
     def _to_int(cls, v):
         if isinstance(v, str):
-            v = v.strip()
-            if v.isdigit() or (v.startswith("-") and v[1:].isdigit()):
-                return int(v)
+            vv = v.strip()
+            if vv.isdigit() or (vv.startswith("-") and vv[1:].isdigit()):
+                return int(vv)
         return v
 
 
@@ -80,11 +83,14 @@ class OnboardingOut(_EnumNormaliser):
     created_at: datetime
     updated_at: Optional[datetime] = None
 
-    # iOS-friendly ISO 8601 with timezone information
+    # iOS-friendly ISO 8601: UTC, no fractional seconds, 'Z' suffix
     @field_serializer("created_at", "updated_at")
     def _ser_dt(self, dt: Optional[datetime], _info):
         if dt is None:
             return None
+        # ensure tz-aware UTC
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
-        return dt.isoformat()
+        dt = dt.astimezone(timezone.utc).replace(microsecond=0)
+        # "2025-10-23T20:15:33Z" (works with JSONDecoder .iso8601)
+        return dt.isoformat().replace("+00:00", "Z")

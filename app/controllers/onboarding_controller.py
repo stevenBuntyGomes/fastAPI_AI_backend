@@ -1,7 +1,7 @@
 # app/controllers/onboarding_controller.py
 
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from fastapi import HTTPException, status
 from bson import ObjectId
@@ -13,7 +13,6 @@ from ..schemas.onboarding_schema import (
     OnboardingResponse,
     OnboardingOut,
 )
-
 
 # -------------------------
 # Helpers
@@ -28,37 +27,25 @@ def _validate_object_id(value: str) -> ObjectId:
             detail="Invalid onboarding id",
         )
 
-
 _ENUM_KEYS = {"vaping_frequency", "hides_vaping", "quit_attempts", "gender"}
 
+def _normalize_enums(d: Dict[str, Any]) -> None:
+    """Lowercase/trim enum-like fields so they match Literal types."""
+    for k in _ENUM_KEYS:
+        v = d.get(k)
+        if isinstance(v, str):
+            d[k] = v.strip().lower()
 
-def _normalize_enums(d: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Lowercase/trim enum-like fields so they match Pydantic Literal types.
-    (Safe even if schema types are broader.)
-    """
-    for k in list(d.keys()):
-        if k in _ENUM_KEYS and isinstance(d[k], str):
-            d[k] = d[k].strip().lower()
-    return d
-
-
-def _tz(dt: Optional[datetime]) -> Optional[datetime]:
-    """
-    Ensure timezone-aware (UTC) datetimes for iOS-friendly ISO8601.
-    """
+def _tz(dt: Any):
+    """Return timezone-aware UTC datetime or None."""
     if dt is None:
         return None
-    if dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
-    return dt
-
+    if isinstance(dt, datetime):
+        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    return dt  # let Pydantic handle if string
 
 def _to_onboarding_out(doc: Dict[str, Any]) -> OnboardingOut:
-    """
-    Convert a Mongo document to the response schema.
-    Ensures id is a string and datetimes are timezone-aware.
-    """
+    """Map Mongo document to response schema (single validation pass)."""
     return OnboardingOut(
         id=str(doc["_id"]),
         vaping_frequency=doc.get("vaping_frequency"),
@@ -78,7 +65,6 @@ def _to_onboarding_out(doc: Dict[str, Any]) -> OnboardingOut:
         updated_at=_tz(doc.get("updated_at")),
     )
 
-
 # -------------------------
 # Controllers
 # -------------------------
@@ -89,12 +75,10 @@ async def create_onboarding(payload: OnboardingRequest) -> OnboardingResponse:
     """
     to_insert: Dict[str, Any] = payload.model_dump(exclude_unset=True)
     _normalize_enums(to_insert)
-    # Always write timezone-aware created_at
     to_insert["created_at"] = datetime.now(timezone.utc)
 
     result = await onboarding_collection.insert_one(to_insert)
     return OnboardingResponse(onboarding_id=str(result.inserted_id))
-
 
 async def get_onboarding(onboarding_id: str) -> OnboardingOut:
     """
@@ -110,7 +94,6 @@ async def get_onboarding(onboarding_id: str) -> OnboardingOut:
         )
 
     return _to_onboarding_out(doc)
-
 
 async def update_onboarding(onboarding_id: str, payload: OnboardingRequest) -> OnboardingOut:
     """
@@ -133,7 +116,6 @@ async def update_onboarding(onboarding_id: str, payload: OnboardingRequest) -> O
         {"$set": updates},
         return_document=ReturnDocument.AFTER,
     )
-
     if not doc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
