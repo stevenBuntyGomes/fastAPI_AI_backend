@@ -7,6 +7,7 @@ VapingFrequency = Literal["never", "occasionally", "daily"]
 HidesVaping     = Literal["always", "sometimes", "rarely", "never"]
 QuitAttempts    = Literal["yes", "no", "many"]
 Gender          = Literal["male", "female", "non-binary", "prefer not to say"]
+UseApp          = Literal["own", "family", "friends"]  # <— NEW
 
 
 # ----- Base: normalize enum-ish strings to lowercase (model-level, safe in v2) -----
@@ -17,7 +18,7 @@ class _EnumNormaliser(BaseModel):
     @classmethod
     def _lower_enums(cls, values):
         if isinstance(values, dict):
-            for k in ("vaping_frequency", "hides_vaping", "quit_attempts", "gender"):
+            for k in ("vaping_frequency", "hides_vaping", "quit_attempts", "gender", "useapp"):
                 v = values.get(k)
                 if isinstance(v, str):
                     values[k] = v.strip().lower()
@@ -30,6 +31,7 @@ class OnboardingRequest(_EnumNormaliser):
     vaping_trigger: Optional[str] = None
     vaping_effect: Optional[str] = None
     hides_vaping: Optional[HidesVaping] = None
+    useapp: Optional[UseApp] = None  # <— NEW
 
     vaping_years: Optional[int] = None
     vape_cost_usd: Optional[int] = None
@@ -68,6 +70,7 @@ class OnboardingOut(_EnumNormaliser):
     vaping_trigger: Optional[str] = None
     vaping_effect: Optional[str] = None
     hides_vaping: Optional[HidesVaping] = None
+    useapp: Optional[UseApp] = None  # <— NEW
 
     vaping_years: Optional[int] = None
     vape_cost_usd: Optional[int] = None

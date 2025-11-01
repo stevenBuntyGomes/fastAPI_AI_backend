@@ -7,6 +7,7 @@ from ..controllers.mypod_controller import (
     add_friend_to_mypod,
     remove_friend_from_mypod,
     get_leaderboard,
+    get_global_leaderboard,   # <— NEW
 )
 from ..utils.auth_utils import get_current_user
 
@@ -41,3 +42,12 @@ async def remove_friend(friend_user_id: str, user=Depends(get_current_user)):
 @router.get("/leaderboard", response_model=List[FriendMeta])
 async def mypod_leaderboard(user=Depends(get_current_user)):
     return await get_leaderboard(user["_id"])
+
+
+# ✅ Global Leaderboard = ALL users sorted by aura (DESC), paginated
+@router.get("/leaderboard/global", response_model=List[FriendMeta])
+async def global_leaderboard(skip: int = 0, limit: int = 20, user=Depends(get_current_user)):
+    """
+    Infinite scroll: ?skip=0&limit=20, then ?skip=20&limit=20, etc.
+    """
+    return await get_global_leaderboard(skip=skip, limit=limit)

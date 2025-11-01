@@ -27,6 +27,8 @@ from ..controllers.auth_controller import (
 
     # NEW
     link_onboarding_to_user,
+    set_memoji,
+    edit_profile,
 )
 
 from ..schemas.auth_schema import (
@@ -46,6 +48,8 @@ from ..schemas.auth_schema import (
     LoginStreakUpdateResponse,
     DeleteAccountResponse,
     OnboardingLinkResponse,
+    SetMemojiRequest,
+    EditProfileRequest,
 )
 
 from ..schemas.onboarding_schema import OnboardingOut
@@ -219,3 +223,35 @@ async def delete_user_account(user_id: str, current_user: dict = Depends(get_cur
     """
     # TODO: enforce admin authorization here
     return await delete_account(user_id)
+
+
+@router.post(
+    "/profile/memoji",
+    response_model=UserOut,
+    summary="Set or clear memoji URL for the authenticated user"
+)
+async def set_memoji_route(
+    payload: SetMemojiRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Send {"memoji_url": "https://..."} to set, or {"memoji_url": null} / "" to clear.
+    """
+    return await set_memoji(current_user, payload.memoji_url)
+
+
+@router.patch(
+    "/profile",
+    response_model=UserOut,
+    summary="Edit profile (update name and/or memoji URL)"
+)
+async def edit_profile_route(
+    payload: EditProfileRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Provide either or both fields:
+      - name (string)
+      - memoji_url (string or null to clear)
+    """
+    return await edit_profile(current_user, payload.name, payload.memoji_url)

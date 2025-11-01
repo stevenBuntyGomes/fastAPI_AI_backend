@@ -7,7 +7,7 @@ from pydantic.functional_validators import BeforeValidator
 
 # Import enum aliases from schema to keep a single source of truth
 from app.schemas.onboarding_schema import (
-    VapingFrequency, HidesVaping, QuitAttempts, Gender
+    VapingFrequency, HidesVaping, QuitAttempts, Gender, UseApp
 )
 
 PyObjectId = Annotated[str, BeforeValidator(lambda x: str(x))]
@@ -30,6 +30,7 @@ class OnboardingModel(BaseModel):
     vaping_trigger: Optional[str] = None
     vaping_effect: Optional[str] = None
     hides_vaping: Optional[HidesVaping] = None
+    useapp: Optional[UseApp] = None  # <— NEW
 
     vaping_years: Optional[int] = None
     vape_cost_usd: Optional[int] = None

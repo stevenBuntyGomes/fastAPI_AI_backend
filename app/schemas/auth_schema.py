@@ -1,5 +1,5 @@
 # app/schemas/auth_schema.py
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, field_validator
 from typing import Optional
 from typing_extensions import Annotated
 from pydantic.functional_validators import BeforeValidator
@@ -31,6 +31,29 @@ class AppleLoginRequest(BaseModel):
     identity_token: str
     onboarding_id: Optional[str] = None  # optional for first-time users
 
+class SetMemojiRequest(BaseModel):
+    memoji_url: Optional[str] = None  # None or "" clears it
+
+    @field_validator("memoji_url", mode="before")
+    @classmethod
+    def _trim(cls, v):
+        if v is None:
+            return None
+        v = str(v).strip()
+        return v or None
+
+
+class EditProfileRequest(BaseModel):
+    name: Optional[str] = None
+    memoji_url: Optional[str] = None
+
+    @field_validator("name", "memoji_url", mode="before")
+    @classmethod
+    def _trim(cls, v):
+        if v is None:
+            return None
+        v = str(v).strip()
+        return v or None
 # NEW: link onboarding to a user after auth
 class OnboardingLinkRequest(BaseModel):
     user_id: str
@@ -44,6 +67,7 @@ class UserOut(BaseModel):
     aura: int = 0
     login_streak: int = 0
     onboarding_id: Optional[PyObjectId] = None  # include onboarding_id
+    memoji_url: Optional[str] = None
 
 class AuthResponse(BaseModel):
     token: str

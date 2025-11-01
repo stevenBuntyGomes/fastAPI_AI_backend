@@ -201,3 +201,50 @@ async def get_leaderboard(owner_user_id: str) -> List[FriendMeta]:
 
     refreshed.sort(key=lambda x: x.get("aura", 0), reverse=True)
     return [FriendMeta(**item) for item in refreshed]
+
+
+# --- NEW: Global leaderboard across ALL users, ranked by aura DESC ---
+async def get_global_leaderboard(skip: int = 0, limit: int = 20) -> List[FriendMeta]:
+    """
+    Global leaderboard from all users, sorted by aura (DESC).
+    Pagination: use ?skip=0&limit=20, then ?skip=20&limit=20, etc.
+    """
+    # sanitize inputs
+    limit = max(1, min(limit, 50))
+    skip = max(0, skip)
+
+    # 1) Page through users by aura
+    projection = {"name": 1, "email": 1, "aura": 1}
+    cursor = (
+        users_collection.find({}, projection)
+        .sort([("aura", -1), ("_id", 1)])  # stable tie-breaker by _id
+        .skip(skip)
+        .limit(limit)
+    )
+
+    users_page = [doc async for doc in cursor]
+    if not users_page:
+        return []
+
+    # 2) Batch-fetch profile pictures from MyPod (if present)
+    ids = [u["_id"] for u in users_page]
+    pics_cursor = mypod_collection.find(
+        {"user_id": {"$in": ids}}, {"user_id": 1, "profile_picture": 1}
+    )
+    pic_map = {}
+    async for mp in pics_cursor:
+        pic_map[mp["user_id"]] = mp.get("profile_picture")
+
+    # 3) Build FriendMeta array (user_id, username, profile_picture, aura)
+    out: List[FriendMeta] = []
+    for u in users_page:
+        username = await _owner_username(u)  # name → email prefix fallback
+        out.append(
+            FriendMeta(
+                user_id=u["_id"],
+                username=username,
+                profile_picture=pic_map.get(u["_id"]),
+                aura=int(u.get("aura") or 0),
+            )
+        )
+    return out

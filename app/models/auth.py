@@ -18,6 +18,7 @@ class UserModel(BaseModel):
     aura: int = 0
     login_streak: int = 0
     onboarding_id: Optional[PyObjectId] = None  # ← NEW: store onboarding_id on the user
+    memoji_url: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     # NEW (optional but handy)
     apns_token: Optional[str] = None       # iOS push token

@@ -27,7 +27,7 @@ def _validate_object_id(value: str) -> ObjectId:
             detail="Invalid onboarding id",
         )
 
-_ENUM_KEYS = {"vaping_frequency", "hides_vaping", "quit_attempts", "gender"}
+_ENUM_KEYS = {"vaping_frequency", "hides_vaping", "quit_attempts", "gender", "useapp"}  # <— NEW
 
 def _normalize_enums(d: Dict[str, Any]) -> None:
     """Lowercase/trim enum-like fields so they match Literal types."""
@@ -52,6 +52,7 @@ def _to_onboarding_out(doc: Dict[str, Any]) -> OnboardingOut:
         vaping_trigger=doc.get("vaping_trigger"),
         vaping_effect=doc.get("vaping_effect"),
         hides_vaping=doc.get("hides_vaping"),
+        useapp=doc.get("useapp"),  # <— NEW
         vaping_years=doc.get("vaping_years"),
         vape_cost_usd=doc.get("vape_cost_usd"),
         puff_count=doc.get("puff_count"),
