@@ -1,4 +1,4 @@
-# app/routes/safety.py
+app/routes/safety.py
 from __future__ import annotations
 
 from datetime import datetime
@@ -208,6 +208,65 @@ async def unblock_user(payload: BlockRequest, user=Depends(get_current_user)):
         {"$pull": {"blocked": payload.target_user_id}},
     )
     return {"ok": True}
+
+
+@router.get("/blocked")
+async def get_blocked_users(user=Depends(get_current_user)):
+    """
+    Return the authenticated user's blocked list as basic user objects and count.
+    Each item includes: id, name, username, avatar_url (when available).
+    """
+    doc = await blocks_collection.find_one(
+        {"user_id": str(user["_id"])},
+        projection={"_id": 0, "blocked": 1},
+    )
+    blocked_ids = doc.get("blocked", []) if doc else []
+    if not blocked_ids:
+        return {"ok": True, "items": [], "count": 0}
+
+    # Coerce valid ObjectIds for lookup
+    oid_list = [ObjectId(x) for x in blocked_ids if ObjectId.is_valid(x)]
+
+    # Safe projection: keep it minimal and non-sensitive
+    projection = {
+        "_id": 1,
+        "name": 1,
+        "full_name": 1,          # fallback if you use this
+        "display_name": 1,       # fallback if you use this
+        "username": 1,
+        "avatar_url": 1,
+        "photo": 1,              # fallback if you use this
+        "profile_picture": 1,    # fallback if you use this
+    }
+
+    items = []
+    if oid_list:
+        cursor = users_collection.find({"_id": {"$in": oid_list}}, projection=projection)
+        async for u in cursor:
+            name = u.get("name") or u.get("full_name") or u.get("display_name")
+            avatar = u.get("avatar_url") or u.get("photo") or u.get("profile_picture")
+            items.append({
+                "id": str(u["_id"]),
+                "name": name,
+                "username": u.get("username"),
+                "avatar_url": avatar,
+            })
+
+    # Note: if some blocked IDs are invalid/missing, they simply won’t appear in items.
+    return {"ok": True, "items": items, "count": len(items)}
+
+
+@router.get("/blocked/count")
+async def get_blocked_users_count(user=Depends(get_current_user)):
+    """
+    Return only the count of blocked users for the authenticated user.
+    """
+    doc = await blocks_collection.find_one(
+        {"user_id": str(user["_id"])},
+        projection={"_id": 0, "blocked": 1},
+    )
+    blocked = doc.get("blocked", []) if doc else []
+    return {"ok": True, "count": len(blocked)}
 
 
 # -----------------------------
