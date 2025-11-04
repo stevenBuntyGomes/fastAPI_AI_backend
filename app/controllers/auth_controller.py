@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from bson import ObjectId
 import random
 import re
-# added and changed authentication
+
 from ..models.auth import UserModel
 from ..db.mongo import (
     users_collection,
