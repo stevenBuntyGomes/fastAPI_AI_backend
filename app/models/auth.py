@@ -17,12 +17,17 @@ class UserModel(BaseModel):
     auth_provider: str = "email"
     aura: int = 0
     login_streak: int = 0
-    onboarding_id: Optional[PyObjectId] = None  # ← NEW: store onboarding_id on the user
+    onboarding_id: Optional[PyObjectId] = None
     memoji_url: Optional[str] = None
+
+    # ✅ NEW username fields
+    username: Optional[str] = None      # stored with leading "@", e.g. "@stephenBgomes"
+    username_lc: Optional[str] = None   # lowercased copy, for uniqueness checks
+
     created_at: datetime = Field(default_factory=datetime.utcnow)
-    # NEW (optional but handy)
-    apns_token: Optional[str] = None       # iOS push token
-    socket_ids: List[str] = []             # currently active socket.io sids
+    apns_token: Optional[str] = None
+    socket_ids: List[str] = []
+
 
     model_config = {
         "populate_by_name": True,

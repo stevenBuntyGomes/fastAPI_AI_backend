@@ -1,5 +1,5 @@
 # app/controllers/auth_controller.py
-from typing import Optional, List
+from typing import Optional, List, Tuple
 from fastapi import HTTPException, status
 from pydantic import EmailStr
 from datetime import datetime, timedelta
@@ -20,6 +20,85 @@ from ..utils.hashing import hash_password, verify_password
 from ..services.email_service import send_email_verification_code
 from ..services.oauth_utils import verify_google_token, verify_apple_token
 from ..schemas.auth_schema import AuthResponse, UserOut
+
+# -----------------------
+# Username helpers (unique, case-insensitive)
+# -----------------------
+
+USERNAME_MIN_LEN = 3
+USERNAME_MAX_LEN = 30
+_USERNAME_ALLOWED_RE = re.compile(r"^[A-Za-z0-9_]+$")
+
+def _name_tokens(name: str) -> List[str]:
+    # Split on non-alphanumerics, keep alphanumeric chunks
+    return [t for t in re.findall(r"[A-Za-z0-9]+", name or "") if t]
+
+def _base_from_name(name: str) -> str:
+    """
+    Example: "Stephen Bunty Gomes" -> "stephenBgomes"
+    - first name lower
+    - if 3+ parts: add first middle initial uppercase
+    - add last name lower
+    - if 2 parts: first + last (both lower)
+    - if 1 part: just first lower
+    - if empty: "user"
+    """
+    parts = _name_tokens(name)
+    if not parts:
+        return "user"
+    if len(parts) >= 3:
+        first = parts[0].lower()
+        middle_initial = parts[1][0].upper()
+        last = parts[-1].lower()
+        return f"{first}{middle_initial}{last}"
+    if len(parts) == 2:
+        return f"{parts[0].lower()}{parts[1].lower()}"
+    return parts[0].lower()
+
+def _normalize_username_input(user_input: str) -> str:
+    """
+    Accepts with/without '@'. Keeps caller's casing.
+    Validates allowed chars and length (excluding '@').
+    Returns WITH leading '@'.
+    """
+    if not user_input:
+        raise HTTPException(status_code=400, detail="username is required")
+
+    u = user_input.lstrip("@").strip()
+    if not (USERNAME_MIN_LEN <= len(u) <= USERNAME_MAX_LEN):
+        raise HTTPException(
+            status_code=400,
+            detail=f"username must be {USERNAME_MIN_LEN}-{USERNAME_MAX_LEN} chars",
+        )
+    if not _USERNAME_ALLOWED_RE.match(u):
+        raise HTTPException(
+            status_code=400,
+            detail="username can contain only letters, numbers, and underscore",
+        )
+    return f"@{u}"
+
+async def _is_username_taken(handle_lc: str, exclude_oid: Optional[ObjectId] = None) -> bool:
+    q: dict = {"username_lc": handle_lc}
+    if exclude_oid:
+        q["_id"] = {"$ne": exclude_oid}
+    doc = await users_collection.find_one(q, {"_id": 1})
+    return doc is not None
+
+async def _generate_unique_username_from_name(name: str) -> Tuple[str, str]:
+    """
+    Creates a unique display handle and its lowercase copy.
+    Returns (username, username_lc), both including leading '@'.
+    """
+    base = _base_from_name(name)
+    candidate = base
+    i = 0
+    while True:
+        handle = f"@{candidate}"
+        handle_lc = handle.lower()
+        if not await _is_username_taken(handle_lc):
+            return handle, handle_lc
+        i += 1
+        candidate = f"{base}{i}"
 
 # -----------------------
 # STEP 1: Send code
@@ -63,6 +142,10 @@ async def verify_email_and_register(
             raise HTTPException(status_code=400, detail="onboarding_id does not exist")
 
     hashed_pw = hash_password(password)
+
+    # Generate unique username
+    username, username_lc = await _generate_unique_username_from_name(name)
+
     result = await users_collection.insert_one(
         {
             "email": email,
@@ -72,7 +155,9 @@ async def verify_email_and_register(
             "aura": 0,
             "login_streak": 0,
             "onboarding_id": ob_obj,      # may be None
-            "memoji_url": None,           # NEW default
+            "memoji_url": None,           # default
+            "username": username,         # NEW
+            "username_lc": username_lc,   # NEW
             "created_at": datetime.utcnow(),
             "updated_at": datetime.utcnow(),
         }
@@ -87,7 +172,8 @@ async def verify_email_and_register(
         aura=0,
         login_streak=0,
         onboarding_id=str(ob_obj) if ob_obj else None,
-        memoji_url=None,  # NEW
+        memoji_url=None,
+        username=username,  # NEW
     )
     token = create_jwt_token({"user_id": str(result.inserted_id)})
     return AuthResponse(token=token, user=user_out)
@@ -100,6 +186,17 @@ async def login_with_email_password(email: EmailStr, password: str) -> AuthRespo
     if not user_dict or not verify_password(password, user_dict.get("password", "")):
         raise HTTPException(status_code=401, detail="❌ Invalid credentials.")
 
+    # Backfill username for legacy users missing it
+    if not user_dict.get("username"):
+        fallback_name = user_dict.get("name") or email.split("@")[0]
+        gen_username, gen_username_lc = await _generate_unique_username_from_name(fallback_name)
+        await users_collection.update_one(
+            {"_id": user_dict["_id"]},
+            {"$set": {"username": gen_username, "username_lc": gen_username_lc, "updated_at": datetime.utcnow()}}
+        )
+        user_dict["username"] = gen_username
+        user_dict["username_lc"] = gen_username_lc
+
     user = UserModel(**user_dict)
     user_out = UserOut(
         id=str(user.id) if user.id else None,
@@ -108,7 +205,8 @@ async def login_with_email_password(email: EmailStr, password: str) -> AuthRespo
         aura=int(user_dict.get("aura") or 0),
         login_streak=int(user_dict.get("login_streak") or 0),
         onboarding_id=str(user_dict.get("onboarding_id")) if user_dict.get("onboarding_id") else None,
-        memoji_url=user_dict.get("memoji_url"),  # NEW
+        memoji_url=user_dict.get("memoji_url"),
+        username=user_dict.get("username"),  # NEW
     )
     token = create_jwt_token({"user_id": str(user.id)})
     return AuthResponse(token=token, user=user_out)
@@ -135,6 +233,9 @@ async def login_with_google(token_id: str, onboarding_id: Optional[str] = None) 
             if not await onboarding_collection.find_one({"_id": ob_obj}):
                 raise HTTPException(status_code=400, detail="onboarding_id does not exist")
 
+        # Generate unique username for first-time Google user
+        username, username_lc = await _generate_unique_username_from_name(name)
+
         result = await users_collection.insert_one(
             {
                 "email": email,
@@ -143,7 +244,9 @@ async def login_with_google(token_id: str, onboarding_id: Optional[str] = None) 
                 "aura": 0,
                 "login_streak": 0,
                 "onboarding_id": ob_obj,
-                "memoji_url": None,  # NEW default
+                "memoji_url": None,
+                "username": username,         # NEW
+                "username_lc": username_lc,   # NEW
                 "created_at": datetime.utcnow(),
                 "updated_at": datetime.utcnow(),
             }
@@ -155,9 +258,21 @@ async def login_with_google(token_id: str, onboarding_id: Optional[str] = None) 
             "aura": 0,
             "login_streak": 0,
             "onboarding_id": ob_obj,
-            "memoji_url": None,  # NEW
+            "memoji_url": None,
+            "username": username,         # NEW
+            "username_lc": username_lc,   # NEW
         }
     else:
+        # If legacy user has no username, assign one now (once)
+        if not user.get("username"):
+            gen_username, gen_username_lc = await _generate_unique_username_from_name(user.get("name") or email.split("@")[0])
+            await users_collection.update_one(
+                {"_id": user["_id"]},
+                {"$set": {"username": gen_username, "username_lc": gen_username_lc, "updated_at": datetime.utcnow()}}
+            )
+            user["username"] = gen_username
+            user["username_lc"] = gen_username_lc
+
         if onboarding_id and not user.get("onboarding_id"):
             try:
                 ob_obj = ObjectId(onboarding_id)
@@ -179,7 +294,8 @@ async def login_with_google(token_id: str, onboarding_id: Optional[str] = None) 
         aura=int(user.get("aura") or 0),
         login_streak=int(user.get("login_streak") or 0),
         onboarding_id=str(user.get("onboarding_id")) if user.get("onboarding_id") else None,
-        memoji_url=user.get("memoji_url"),  # NEW
+        memoji_url=user.get("memoji_url"),
+        username=user.get("username"),  # NEW
     )
     return AuthResponse(token=token, user=user_out)
 
@@ -214,6 +330,9 @@ async def login_with_apple(identity_token: str, onboarding_id: Optional[str] = N
             if not await onboarding_collection.find_one({"_id": ob_obj}):
                 raise HTTPException(status_code=400, detail="onboarding_id does not exist")
 
+        # Generate unique username for first-time Apple user
+        username, username_lc = await _generate_unique_username_from_name(name)
+
         result = await users_collection.insert_one(
             {
                 "email": email,
@@ -222,7 +341,9 @@ async def login_with_apple(identity_token: str, onboarding_id: Optional[str] = N
                 "aura": 0,
                 "login_streak": 0,
                 "onboarding_id": ob_obj,
-                "memoji_url": None,  # NEW default
+                "memoji_url": None,
+                "username": username,         # NEW
+                "username_lc": username_lc,   # NEW
                 "created_at": datetime.utcnow(),
                 "updated_at": datetime.utcnow(),
             }
@@ -234,9 +355,21 @@ async def login_with_apple(identity_token: str, onboarding_id: Optional[str] = N
             "aura": 0,
             "login_streak": 0,
             "onboarding_id": ob_obj,
-            "memoji_url": None,  # NEW
+            "memoji_url": None,
+            "username": username,         # NEW
+            "username_lc": username_lc,   # NEW
         }
     else:
+        # If legacy user has no username, assign one now (once)
+        if not user.get("username"):
+            gen_username, gen_username_lc = await _generate_unique_username_from_name(user.get("name") or email.split("@")[0])
+            await users_collection.update_one(
+                {"_id": user["_id"]},
+                {"$set": {"username": gen_username, "username_lc": gen_username_lc, "updated_at": datetime.utcnow()}}
+            )
+            user["username"] = gen_username
+            user["username_lc"] = gen_username_lc
+
         if onboarding_id and not user.get("onboarding_id"):
             try:
                 ob_obj = ObjectId(onboarding_id)
@@ -258,7 +391,8 @@ async def login_with_apple(identity_token: str, onboarding_id: Optional[str] = N
         aura=int(user.get("aura") or 0),
         login_streak=int(user.get("login_streak") or 0),
         onboarding_id=str(user.get("onboarding_id")) if user.get("onboarding_id") else None,
-        memoji_url=user.get("memoji_url"),  # NEW
+        memoji_url=user.get("memoji_url"),
+        username=user.get("username"),  # NEW
     )
     return AuthResponse(token=token, user=user_out)
 
@@ -313,7 +447,7 @@ async def get_authenticated_user(current_user: dict) -> UserOut:
 
     doc = await users_collection.find_one(
         {"_id": uid},
-        {"email": 1, "name": 1, "aura": 1, "login_streak": 1, "onboarding_id": 1, "memoji_url": 1},  # NEW
+        {"email": 1, "name": 1, "aura": 1, "login_streak": 1, "onboarding_id": 1, "memoji_url": 1, "username": 1},  # NEW
     )
     if not doc:
         raise HTTPException(status_code=404, detail="User not found")
@@ -325,7 +459,8 @@ async def get_authenticated_user(current_user: dict) -> UserOut:
         aura=int(doc.get("aura") or 0),
         login_streak=int(doc.get("login_streak") or 0),
         onboarding_id=str(doc.get("onboarding_id")) if doc.get("onboarding_id") else None,
-        memoji_url=doc.get("memoji_url"),  # NEW
+        memoji_url=doc.get("memoji_url"),
+        username=doc.get("username"),  # NEW
     )
 
 # -----------------------
@@ -346,7 +481,8 @@ async def get_user_by_id(user_id: str) -> UserOut:
         "created_at": 1,
         "apns_token": 1,
         "socket_ids": 1,
-        "memoji_url": 1,  # NEW
+        "memoji_url": 1,
+        "username": 1,  # NEW
     }
     doc = await users_collection.find_one({"_id": obj_id}, projection)
     if not doc:
@@ -359,7 +495,8 @@ async def get_user_by_id(user_id: str) -> UserOut:
         aura=int(doc.get("aura") or 0),
         login_streak=int(doc.get("login_streak") or 0),
         onboarding_id=str(doc.get("onboarding_id")) if doc.get("onboarding_id") else None,
-        memoji_url=doc.get("memoji_url"),  # NEW
+        memoji_url=doc.get("memoji_url"),
+        username=doc.get("username"),  # NEW
     )
 
 # -----------------------
@@ -383,7 +520,10 @@ async def add_aura_points(current_user: dict, points: int):
         {"$inc": {"aura": points}, "$set": {"updated_at": datetime.utcnow()}},
     )
 
-    updated = await users_collection.find_one({"_id": uid})
+    updated = await users_collection.find_one(
+        {"_id": uid},
+        {"email": 1, "name": 1, "aura": 1, "login_streak": 1, "onboarding_id": 1, "memoji_url": 1, "username": 1},
+    )
     if not updated:
         raise HTTPException(status_code=404, detail="User not found after update")
 
@@ -394,7 +534,8 @@ async def add_aura_points(current_user: dict, points: int):
         aura=int(updated.get("aura") or 0),
         login_streak=int(updated.get("login_streak") or 0),
         onboarding_id=str(updated.get("onboarding_id")) if updated.get("onboarding_id") else None,
-        memoji_url=updated.get("memoji_url"),  # NEW
+        memoji_url=updated.get("memoji_url"),
+        username=updated.get("username"),  # NEW
     )
     return {"message": "✅ Aura updated", "aura": user_out.aura, "user": user_out}
 
@@ -422,7 +563,7 @@ async def search_users_by_name_or_id(
     except Exception:
         cur_oid = None
 
-    projection = {"email": 1, "name": 1, "aura": 1, "login_streak": 1, "onboarding_id": 1, "memoji_url": 1}  # NEW
+    projection = {"email": 1, "name": 1, "aura": 1, "login_streak": 1, "onboarding_id": 1, "memoji_url": 1, "username": 1}  # NEW
 
     # Mode A: exact _id match
     if ObjectId.is_valid(q):
@@ -440,7 +581,8 @@ async def search_users_by_name_or_id(
                 aura=int(doc.get("aura") or 0),
                 login_streak=int(doc.get("login_streak") or 0),
                 onboarding_id=str(doc.get("onboarding_id")) if doc.get("onboarding_id") else None,
-                memoji_url=doc.get("memoji_url"),  # NEW
+                memoji_url=doc.get("memoji_url"),
+                username=doc.get("username"),  # NEW
             )
         ]
 
@@ -467,7 +609,8 @@ async def search_users_by_name_or_id(
                 aura=int(doc.get("aura") or 0),
                 login_streak=int(doc.get("login_streak") or 0),
                 onboarding_id=str(doc.get("onboarding_id")) if doc.get("onboarding_id") else None,
-                memoji_url=doc.get("memoji_url"),  # NEW
+                memoji_url=doc.get("memoji_url"),
+                username=doc.get("username"),  # NEW
             )
         )
     return results
@@ -514,7 +657,10 @@ async def set_login_streak(current_user: dict, login_streak: int):
         {"$set": {"login_streak": login_streak, "updated_at": datetime.utcnow()}},
     )
 
-    updated = await users_collection.find_one({"_id": uid})
+    updated = await users_collection.find_one(
+        {"_id": uid},
+        {"email": 1, "name": 1, "aura": 1, "login_streak": 1, "onboarding_id": 1, "memoji_url": 1, "username": 1},
+    )
     if not updated:
         raise HTTPException(status_code=404, detail="User not found after update")
 
@@ -525,7 +671,8 @@ async def set_login_streak(current_user: dict, login_streak: int):
         aura=int(updated.get("aura") or 0),
         login_streak=int(updated.get("login_streak") or 0),
         onboarding_id=str(updated.get("onboarding_id")) if updated.get("onboarding_id") else None,
-        memoji_url=updated.get("memoji_url"),  # NEW
+        memoji_url=updated.get("memoji_url"),
+        username=updated.get("username"),  # NEW
     )
 
     return {"message": "✅ Login streak set", "login_streak": user_out.login_streak, "user": user_out}
@@ -594,7 +741,7 @@ async def link_onboarding_to_user(user_id: str, onboarding_id: str, current_user
     # Return updated user
     updated = await users_collection.find_one(
         {"_id": req_oid},
-        {"email": 1, "name": 1, "aura": 1, "login_streak": 1, "onboarding_id": 1, "memoji_url": 1},  # NEW
+        {"email": 1, "name": 1, "aura": 1, "login_streak": 1, "onboarding_id": 1, "memoji_url": 1, "username": 1},  # NEW
     )
     return UserOut(
         id=str(updated["_id"]),
@@ -603,7 +750,8 @@ async def link_onboarding_to_user(user_id: str, onboarding_id: str, current_user
         aura=int(updated.get("aura") or 0),
         login_streak=int(updated.get("login_streak") or 0),
         onboarding_id=str(updated.get("onboarding_id")) if updated.get("onboarding_id") else None,
-        memoji_url=updated.get("memoji_url"),  # NEW
+        memoji_url=updated.get("memoji_url"),
+        username=updated.get("username"),  # NEW
     )
 
 # -----------------------
@@ -623,7 +771,7 @@ async def set_memoji(current_user: dict, memoji_url: Optional[str]) -> UserOut:
 
     doc = await users_collection.find_one(
         {"_id": oid},
-        {"email": 1, "name": 1, "aura": 1, "login_streak": 1, "onboarding_id": 1, "memoji_url": 1},
+        {"email": 1, "name": 1, "aura": 1, "login_streak": 1, "onboarding_id": 1, "memoji_url": 1, "username": 1},  # NEW
     )
     if not doc:
         raise HTTPException(status_code=404, detail="User not found")
@@ -636,13 +784,14 @@ async def set_memoji(current_user: dict, memoji_url: Optional[str]) -> UserOut:
         login_streak=int(doc.get("login_streak") or 0),
         onboarding_id=str(doc.get("onboarding_id")) if doc.get("onboarding_id") else None,
         memoji_url=doc.get("memoji_url"),
+        username=doc.get("username"),  # NEW
     )
 
 # -----------------------
-# Edit profile (name and/or memoji)
+# Edit profile (name and/or memoji and/or username)
 # -----------------------
-async def edit_profile(current_user: dict, name: Optional[str], memoji_url: Optional[str]) -> UserOut:
-    if name is None and memoji_url is None:
+async def edit_profile(current_user: dict, name: Optional[str], memoji_url: Optional[str], username: Optional[str] = None) -> UserOut:
+    if name is None and memoji_url is None and username is None:
         raise HTTPException(status_code=400, detail="Nothing to update")
 
     uid = current_user.get("_id")
@@ -658,12 +807,20 @@ async def edit_profile(current_user: dict, name: Optional[str], memoji_url: Opti
         update_set["name"] = name
     if memoji_url is not None:
         update_set["memoji_url"] = memoji_url
+    if username is not None:
+        # Validate and ensure unique
+        display_handle = _normalize_username_input(username)          # with leading "@"
+        display_handle_lc = display_handle.lower()
+        if await _is_username_taken(display_handle_lc, exclude_oid=oid):
+            raise HTTPException(status_code=409, detail="username already exists, please choose another")
+        update_set["username"] = display_handle
+        update_set["username_lc"] = display_handle_lc
 
     await users_collection.update_one({"_id": oid}, {"$set": update_set})
 
     doc = await users_collection.find_one(
         {"_id": oid},
-        {"email": 1, "name": 1, "aura": 1, "login_streak": 1, "onboarding_id": 1, "memoji_url": 1},
+        {"email": 1, "name": 1, "aura": 1, "login_streak": 1, "onboarding_id": 1, "memoji_url": 1, "username": 1},  # NEW
     )
     if not doc:
         raise HTTPException(status_code=404, detail="User not found")
@@ -676,4 +833,5 @@ async def edit_profile(current_user: dict, name: Optional[str], memoji_url: Opti
         login_streak=int(doc.get("login_streak") or 0),
         onboarding_id=str(doc.get("onboarding_id")) if doc.get("onboarding_id") else None,
         memoji_url=doc.get("memoji_url"),
+        username=doc.get("username"),  # NEW
     )

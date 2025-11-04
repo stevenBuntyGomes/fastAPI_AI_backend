@@ -243,15 +243,16 @@ async def set_memoji_route(
 @router.patch(
     "/profile",
     response_model=UserOut,
-    summary="Edit profile (update name and/or memoji URL)"
+    summary="Edit profile (update name, memoji URL, and/or username)"
 )
 async def edit_profile_route(
     payload: EditProfileRequest,
     current_user: dict = Depends(get_current_user),
 ):
     """
-    Provide either or both fields:
+    Provide any of:
       - name (string)
       - memoji_url (string or null to clear)
+      - username (string, with or without leading "@"); must be unique
     """
-    return await edit_profile(current_user, payload.name, payload.memoji_url)
+    return await edit_profile(current_user, payload.name, payload.memoji_url, payload.username)

@@ -46,8 +46,9 @@ class SetMemojiRequest(BaseModel):
 class EditProfileRequest(BaseModel):
     name: Optional[str] = None
     memoji_url: Optional[str] = None
+    username: Optional[str] = None  # ✅ NEW
 
-    @field_validator("name", "memoji_url", mode="before")
+    @field_validator("name", "memoji_url", "username", mode="before")
     @classmethod
     def _trim(cls, v):
         if v is None:
@@ -66,8 +67,10 @@ class UserOut(BaseModel):
     name: Optional[str]
     aura: int = 0
     login_streak: int = 0
-    onboarding_id: Optional[PyObjectId] = None  # include onboarding_id
+    onboarding_id: Optional[PyObjectId] = None
     memoji_url: Optional[str] = None
+    username: Optional[str] = None  # ✅ NEW, includes leading "@"
+
 
 class AuthResponse(BaseModel):
     token: str
