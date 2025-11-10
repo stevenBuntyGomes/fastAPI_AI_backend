@@ -1,5 +1,3 @@
-# app/routes/auth.py
-
 from typing import List
 from fastapi import APIRouter, Body, Depends
 from pydantic import EmailStr
@@ -25,10 +23,14 @@ from ..controllers.auth_controller import (
     search_users_by_name_or_id,
     delete_account,
 
-    # NEW
+    # NEW / renamed
     link_onboarding_to_user,
-    set_memoji,
+    set_avatar,
     edit_profile,
+
+    # NEW memoji presets
+    list_memoji_presets,
+    select_memoji_for_user,
 )
 
 from ..schemas.auth_schema import (
@@ -48,16 +50,17 @@ from ..schemas.auth_schema import (
     LoginStreakUpdateResponse,
     DeleteAccountResponse,
     OnboardingLinkResponse,
-    SetMemojiRequest,
-    EditProfileRequest,
-)
 
+    # Avatar + memoji presets
+    SetAvatarRequest,
+    EditProfileRequest,
+    MemojiPresetsResponse,
+    MemojiSelectRequest,
+)
 from ..schemas.onboarding_schema import OnboardingOut
 from ..utils.auth_utils import get_current_user
 
-
 router = APIRouter(prefix="/auth", tags=["Auth"])
-
 
 # ---------------------------
 # Email verification & signup
@@ -65,16 +68,10 @@ router = APIRouter(prefix="/auth", tags=["Auth"])
 
 @router.post("/send-code", summary="Send email verification code")
 async def send_code(email: EmailStr = Body(..., embed=True)):
-    """Send a 6-digit verification code to the given email."""
     return await send_verification_code(email)
-
 
 @router.post("/register", response_model=AuthResponse, summary="Register user after verifying email")
 async def register_user(payload: RegisterRequest):
-    """
-    Verify code, create user, and return JWT + user.
-    NOTE: onboarding_id is OPTIONAL for email registration.
-    """
     return await verify_email_and_register(
         email=payload.email,
         code=payload.code,
@@ -83,43 +80,31 @@ async def register_user(payload: RegisterRequest):
         onboarding_id=payload.onboarding_id,
     )
 
-
 # -------------
 # Login (Email)
 # -------------
-
 @router.post("/login", response_model=AuthResponse, summary="Login with email and password")
 async def login_user(payload: LoginRequest):
-    """Login using email/password credentials."""
     return await login_with_email_password(payload.email, payload.password)
-
 
 # --------------
 # Login (OAuth)
 # --------------
-
 @router.post("/google", response_model=AuthResponse, summary="Login with Google")
 async def google_login(payload: GoogleLoginRequest):
-    """Login or create user via Google OAuth token."""
     return await login_with_google(payload.token_id, payload.onboarding_id)
-
 
 @router.post("/apple", response_model=AuthResponse, summary="Login with Apple")
 async def apple_login(payload: AppleLoginRequest):
-    """Login or create user via Apple identity token."""
     return await login_with_apple(payload.identity_token, payload.onboarding_id)
-
 
 # ----------------------
 # Onboarding convenience
 # ----------------------
-
 @router.get("/onboarding/{onboarding_id}", response_model=OnboardingOut, summary="Get onboarding by id")
 async def get_onboarding_via_auth(onboarding_id: str):
-    """Fetch onboarding document by id."""
     return await fetch_onboarding_by_id(onboarding_id)
 
-# NEW: Link onboarding to a user after login/registration
 @router.post(
     "/onboarding_user",
     response_model=OnboardingLinkResponse,
@@ -129,37 +114,22 @@ async def link_onboarding_user(
     payload: OnboardingLinkRequest,
     current_user: dict = Depends(get_current_user),
 ):
-    """
-    The client may register/login BEFORE onboarding. This endpoint allows the app to later
-    associate an onboarding document with the authenticated user.
-
-    Rules:
-      - Caller must be authenticated
-      - payload.user_id MUST match the authenticated user's id
-      - onboarding_id must exist
-    """
     user = await link_onboarding_to_user(payload.user_id, payload.onboarding_id, current_user)
     return OnboardingLinkResponse(user=user)
 
 # ---------------------
 # Authenticated helpers
 # ---------------------
-
 @router.get("/me", response_model=UserOut, summary="Get authenticated user")
 async def get_me(current_user: dict = Depends(get_current_user)):
-    """Return the currently authenticated user (via JWT)."""
     return await get_authenticated_user(current_user)
-
 
 # -------------------------
 # Mutations on user profile
 # -------------------------
-
 @router.post("/aura/add", response_model=AuraUpdateResponse, summary="Increment authenticated user's aura")
 async def add_aura(payload: AddAuraRequest, current_user: dict = Depends(get_current_user)):
-    """Increment the caller's aura by a positive integer."""
     return await add_aura_points(current_user, payload.points)
-
 
 @router.post(
     "/login-streak/set",
@@ -170,17 +140,11 @@ async def set_login_streak_route(
     payload: LoginStreakSetRequest,
     current_user: dict = Depends(get_current_user),
 ):
-    """
-    Frontend computes login_streak as `days_tracked.length` and sends it here.
-    This sets (not increments) the caller's login_streak.
-    """
     return await set_login_streak(current_user, payload.login_streak)
-
 
 # -------------
 # Search & Read
 # -------------
-
 @router.get("/users/search", response_model=List[UserOut], summary="Search users by name or exact id")
 async def search_users(
     q: str,
@@ -189,70 +153,65 @@ async def search_users(
     exclude_self: bool = True,
     current_user: dict = Depends(get_current_user),
 ):
-    """
-    If `q` is a valid 24-char ObjectId, returns that exact user (unless exclude_self hides you).
-    Otherwise, performs a case-insensitive substring search on `name`.
-    """
     return await search_users_by_name_or_id(
         q=q, limit=limit, skip=skip, exclude_self=exclude_self, current_user=current_user
     )
 
-
 @router.get("/user/{user_id}", response_model=UserOut, summary="Get a user by id")
 async def get_user(user_id: str, current_user: dict = Depends(get_current_user)):
-    """
-    Return a normalized user for the given `user_id`.
-    Requires authentication but is not restricted to self.
-    """
     return await get_user_by_id(user_id)
-
 
 @router.delete("/me", response_model=DeleteAccountResponse, summary="Delete my account")
 async def delete_my_account(current_user: dict = Depends(get_current_user)):
-    """
-    Permanently delete the authenticated user's account and related data.
-    """
     user_id = str(current_user["_id"])
     return await delete_account(user_id)
 
-
 @router.delete("/user/{user_id}", response_model=DeleteAccountResponse, summary="(Admin) Delete a user by id")
 async def delete_user_account(user_id: str, current_user: dict = Depends(get_current_user)):
-    """
-    Admin-only: Permanently delete a specific user's account and related data.
-    """
     # TODO: enforce admin authorization here
     return await delete_account(user_id)
 
-
+# ----------
+# Avatar (kept endpoint path, changed field name)
+# ----------
 @router.post(
     "/profile/memoji",
     response_model=UserOut,
-    summary="Set or clear memoji URL for the authenticated user"
+    summary="Set or clear avatar URL for the authenticated user (send { avatar_url })"
 )
-async def set_memoji_route(
-    payload: SetMemojiRequest,
+async def set_avatar_route(
+    payload: SetAvatarRequest,
     current_user: dict = Depends(get_current_user),
 ):
-    """
-    Send {"memoji_url": "https://..."} to set, or {"memoji_url": null} / "" to clear.
-    """
-    return await set_memoji(current_user, payload.memoji_url)
-
+    return await set_avatar(current_user, payload.avatar_url)
 
 @router.patch(
     "/profile",
     response_model=UserOut,
-    summary="Edit profile (update name, memoji URL, and/or username)"
+    summary="Edit profile (update name, avatar URL, and/or username)"
 )
 async def edit_profile_route(
     payload: EditProfileRequest,
     current_user: dict = Depends(get_current_user),
 ):
-    """
-    Provide any of:
-      - name (string)
-      - memoji_url (string or null to clear)
-      - username (string, with or without leading "@"); must be unique
-    """
-    return await edit_profile(current_user, payload.name, payload.memoji_url, payload.username)
+    return await edit_profile(current_user, payload.name, payload.avatar_url, payload.username)
+
+# ----------
+# Memoji Presets
+# ----------
+@router.get(
+    "/memoji/presets",
+    response_model=MemojiPresetsResponse,
+    summary="List available memoji preset URLs from Cloudinary (configurable)"
+)
+async def memoji_presets():
+    presets = await list_memoji_presets()
+    return MemojiPresetsResponse(presets=presets)
+
+@router.post(
+    "/memoji/select",
+    response_model=UserOut,
+    summary="Set avatar to one of the memoji preset URLs"
+)
+async def memoji_select(payload: MemojiSelectRequest, current_user: dict = Depends(get_current_user)):
+    return await select_memoji_for_user(current_user, payload.url)

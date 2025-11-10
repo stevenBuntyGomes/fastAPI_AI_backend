@@ -1,4 +1,3 @@
-# app/models/auth.py
 from pydantic import BaseModel, EmailStr, Field
 from typing import Optional, List
 from datetime import datetime
@@ -18,7 +17,9 @@ class UserModel(BaseModel):
     aura: int = 0
     login_streak: int = 0
     onboarding_id: Optional[PyObjectId] = None
-    memoji_url: Optional[str] = None
+
+    # ✅ RENAMED
+    avatar_url: Optional[str] = None
 
     # ✅ NEW username fields
     username: Optional[str] = None      # stored with leading "@", e.g. "@stephenBgomes"
@@ -28,9 +29,10 @@ class UserModel(BaseModel):
     apns_token: Optional[str] = None
     socket_ids: List[str] = []
 
-
     model_config = {
         "populate_by_name": True,
         "arbitrary_types_allowed": True,
         "json_encoders": {ObjectId: str},
+        # Important for legacy docs that may still have 'memoji_url'
+        "extra": "ignore",
     }

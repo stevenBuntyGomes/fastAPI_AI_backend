@@ -22,6 +22,7 @@ from app.routes.referral import router as referral_router
 from .routes.legal import router as legal_router
 from .routes.safety import router as safety_router
 from .routes.moderation_admin import router as moderation_admin_router
+from .routes.social_achievement_routes import router as social_achievement_router
 
 # ---------------------------
 # Build FastAPI app
@@ -60,6 +61,7 @@ fastapi_app.include_router(friend_router)
 fastapi_app.include_router(mypod_router)
 fastapi_app.include_router(milestone_router)
 fastapi_app.include_router(referral_router)
+fastapi_app.include_router(social_achievement_router)
 
 # APNs device registration + bump push (no Socket.IO)
 fastapi_app.include_router(devices_router)
@@ -67,6 +69,7 @@ fastapi_app.include_router(bump_router)
 fastapi_app.include_router(legal_router)
 fastapi_app.include_router(safety_router)
 fastapi_app.include_router(moderation_admin_router)
+
 
 # ---------------------------
 # Startup tasks

@@ -1,6 +1,5 @@
-# app/schemas/auth_schema.py
 from pydantic import BaseModel, EmailStr, field_validator
-from typing import Optional
+from typing import Optional, List
 from typing_extensions import Annotated
 from pydantic.functional_validators import BeforeValidator
 
@@ -17,7 +16,7 @@ class RegisterRequest(BaseModel):
     name: str
     password: str
     login_streak: int = 0
-    onboarding_id: Optional[str] = None  # ← NOW OPTIONAL for email registration
+    onboarding_id: Optional[str] = None  # optional for email registration
 
 class LoginRequest(BaseModel):
     email: EmailStr
@@ -25,36 +24,38 @@ class LoginRequest(BaseModel):
 
 class GoogleLoginRequest(BaseModel):
     token_id: str
-    onboarding_id: Optional[str] = None  # optional for first-time users
+    onboarding_id: Optional[str] = None
 
 class AppleLoginRequest(BaseModel):
     identity_token: str
-    onboarding_id: Optional[str] = None  # optional for first-time users
+    onboarding_id: Optional[str] = None
 
-class SetMemojiRequest(BaseModel):
-    memoji_url: Optional[str] = None  # None or "" clears it
+# ✅ RENAMED: Set avatar (kept route path /auth/profile/memoji)
+class SetAvatarRequest(BaseModel):
+    avatar_url: Optional[str] = None  # None or "" clears it
 
-    @field_validator("memoji_url", mode="before")
+    @field_validator("avatar_url", mode="before")
     @classmethod
-    def _trim(cls, v):
+    def _trim_accept_legacy(cls, v):
+        # Accept both avatar_url and (legacy) memoji_url if client still sends it
         if v is None:
             return None
         v = str(v).strip()
         return v or None
-
 
 class EditProfileRequest(BaseModel):
     name: Optional[str] = None
-    memoji_url: Optional[str] = None
-    username: Optional[str] = None  # ✅ NEW
+    avatar_url: Optional[str] = None   # ✅ RENAMED
+    username: Optional[str] = None
 
-    @field_validator("name", "memoji_url", "username", mode="before")
+    @field_validator("name", "avatar_url", "username", mode="before")
     @classmethod
     def _trim(cls, v):
         if v is None:
             return None
         v = str(v).strip()
         return v or None
+
 # NEW: link onboarding to a user after auth
 class OnboardingLinkRequest(BaseModel):
     user_id: str
@@ -68,27 +69,26 @@ class UserOut(BaseModel):
     aura: int = 0
     login_streak: int = 0
     onboarding_id: Optional[PyObjectId] = None
-    memoji_url: Optional[str] = None
-    username: Optional[str] = None  # ✅ NEW, includes leading "@"
-
+    avatar_url: Optional[str] = None   # ✅ RENAMED
+    username: Optional[str] = None
 
 class AuthResponse(BaseModel):
     token: str
     user: UserOut
 
 class LoginStreakSetRequest(BaseModel):
-    login_streak: int  # send days_tracked.length from frontend (must be >= 0)
+    login_streak: int  # >= 0
 
 class LoginStreakUpdateResponse(BaseModel):
     message: Optional[str] = None
     login_streak: int
     user: UserOut
 
-# ✅ New request for adding aura
+# ✅ Add aura
 class AddAuraRequest(BaseModel):
-    points: int  # number of points to add (must be > 0)
+    points: int
 
-# ✅ New response for updated aura + user
+# ✅ Updated aura response
 class AuraUpdateResponse(BaseModel):
     message: Optional[str] = None
     aura: int
@@ -102,3 +102,27 @@ class DeleteAccountResponse(BaseModel):
 class OnboardingLinkResponse(BaseModel):
     message: str = "✅ Onboarding linked"
     user: UserOut
+
+# ---------- Upload schemas ----------
+class Base64ImageUploadRequest(BaseModel):
+    image_base64: str
+    folder: Optional[str] = None
+
+class ImageUploadResponse(BaseModel):
+    url: str
+    public_id: Optional[str] = None
+
+# ---------- Memoji preset selection ----------
+class MemojiPresetsResponse(BaseModel):
+    presets: List[str]
+
+class MemojiSelectRequest(BaseModel):
+    url: str
+
+    @field_validator("url", mode="before")
+    @classmethod
+    def _trim_url(cls, v):
+        v = str(v or "").strip()
+        if not v:
+            raise ValueError("url is required")
+        return v

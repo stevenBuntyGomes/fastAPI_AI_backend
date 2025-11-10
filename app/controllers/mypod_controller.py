@@ -1,12 +1,15 @@
 # app/controllers/mypod_controller.py
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from bson import ObjectId
 from fastapi import HTTPException
 
 from ..db.mongo import mypod_collection, users_collection
-from ..schemas.mypod_schema import MyPodModel, FriendMeta
+from ..schemas.mypod_schema import MyPodModel, FriendMeta, LeaderboardEntry
 
+# -----------------------
+# Helpers
+# -----------------------
 
 def _as_oid(value: str) -> ObjectId:
     try:
@@ -41,7 +44,7 @@ async def _ensure_mypod(owner_user_id: str) -> dict:
         "username": await _owner_username(user),
         "profile_picture": None,
         "aura": int((user or {}).get("aura", 0)),
-        "login_streak": 0,
+        "login_streak": int((user or {}).get("login_streak", 0)),
         "rank": None,
         "leaderboard_data": [],
         "friends_list": [],
@@ -203,7 +206,7 @@ async def get_leaderboard(owner_user_id: str) -> List[FriendMeta]:
     return [FriendMeta(**item) for item in refreshed]
 
 
-# --- NEW: Global leaderboard across ALL users, ranked by aura DESC ---
+# --- Global leaderboard across ALL users, ranked by aura DESC ---
 async def get_global_leaderboard(skip: int = 0, limit: int = 20) -> List[FriendMeta]:
     """
     Global leaderboard from all users, sorted by aura (DESC).
@@ -231,7 +234,7 @@ async def get_global_leaderboard(skip: int = 0, limit: int = 20) -> List[FriendM
     pics_cursor = mypod_collection.find(
         {"user_id": {"$in": ids}}, {"user_id": 1, "profile_picture": 1}
     )
-    pic_map = {}
+    pic_map: Dict[Any, Optional[str]] = {}
     async for mp in pics_cursor:
         pic_map[mp["user_id"]] = mp.get("profile_picture")
 
@@ -248,3 +251,71 @@ async def get_global_leaderboard(skip: int = 0, limit: int = 20) -> List[FriendM
             )
         )
     return out
+
+
+# --- NEW: Rebuild rank & leaderboard_data for THIS user only ---
+async def rebuild_rank_for_user(user_id: str, top_n: int = 20) -> int:
+    """
+    Recomputes the caller's local leaderboard among their friends (+ self),
+    sorts by aura (DESC), writes:
+      - mypod.rank
+      - mypod.leaderboard_data  (top N entries)
+    Returns the user's rank (1-based).
+    """
+    uid = str(user_id)
+
+    # Fetch MyPod by either ObjectId or string user_id
+    mp = await mypod_collection.find_one({"user_id": _as_oid(uid)})
+    if not mp:
+        # if missing, create a minimal pod first
+        mp = await _ensure_mypod(uid)
+
+    # Collect friend ids (handles mixed formats: str, ObjectId, { user_id })
+    def _to_oid(v):
+        if isinstance(v, dict) and v.get("user_id"):
+            v = v["user_id"]
+        try:
+            return _as_oid(str(v))
+        except Exception:
+            return None
+
+    friend_ids = mp.get("friends_list") or []
+    oids = [oid for oid in (_to_oid(x) for x in friend_ids) if oid]
+
+    me_oid = _as_oid(uid)
+    if me_oid not in oids:
+        oids.append(me_oid)
+
+    # Pull aura + names
+    cursor = users_collection.find(
+        {"_id": {"$in": oids}},
+        {"name": 1, "email": 1, "profile_picture": 1, "aura": 1},
+    )
+    docs = await cursor.to_list(length=10000)
+
+    def _username(u: dict) -> str:
+        name = (u.get("name") or "").strip()
+        if name:
+            return name
+        em = (u.get("email") or "")
+        return em.split("@")[0] if em else str(u["_id"])[-6:]
+
+    rows = [{
+        "user_id": str(u["_id"]),
+        "username": _username(u),
+        "profile_picture": (u.get("profile_picture") or None),
+        "aura": int(u.get("aura") or 0),
+    } for u in docs]
+
+    rows.sort(key=lambda r: r["aura"], reverse=True)
+    rank = next((i + 1 for i, r in enumerate(rows) if r["user_id"] == uid), 1)
+
+    top = rows[: max(1, min(top_n, 50))]
+    leaderboard = [LeaderboardEntry(**r).model_dump() for r in top]
+
+    now = datetime.utcnow()
+    await mypod_collection.update_one(
+        {"_id": mp["_id"]},
+        {"$set": {"rank": rank, "leaderboard_data": leaderboard, "updated_at": now}},
+    )
+    return rank
