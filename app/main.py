@@ -19,10 +19,11 @@ from app.routes.onboarding import router as onboarding_router
 from app.routes.devices import router as devices_router
 from app.routes.bump import router as bump_router  # APNs-only bump
 from app.routes.referral import router as referral_router
-from .routes.legal import router as legal_router
-from .routes.safety import router as safety_router
-from .routes.moderation_admin import router as moderation_admin_router
-from .routes.social_achievement_routes import router as social_achievement_router
+from app.routes.legal import router as legal_router
+from app.routes.safety import router as safety_router
+from app.routes.moderation_admin import router as moderation_admin_router
+from app.routes.social_achievement_routes import router as social_achievement_router
+from app.routes.upload import upload_router
 
 # ---------------------------
 # Build FastAPI app
@@ -69,6 +70,8 @@ fastapi_app.include_router(bump_router)
 fastapi_app.include_router(legal_router)
 fastapi_app.include_router(safety_router)
 fastapi_app.include_router(moderation_admin_router)
+fastapi_app.include_router(upload_router)
+
 
 
 # ---------------------------
