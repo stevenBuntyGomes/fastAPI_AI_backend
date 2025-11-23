@@ -128,3 +128,19 @@ async def init_db_indexes() -> None:
     #     partialFilterExpression={"status": "pending"},
     #     name="unique_pending_per_pair",
     # )
+
+    # ==============================
+    # Referrals (NEW indexes)
+    # ==============================
+
+    # Referral codes: one code per user
+    await referral_codes_collection.create_index("code", unique=True)
+    await referral_codes_collection.create_index("user_id", unique=True)
+
+    # Referrals:
+    # - each referee can only apply once
+    await referrals_collection.create_index("referee_user_id", unique=True)
+    # - nice to query by referrer and code
+    await referrals_collection.create_index("referrer_user_id")
+    await referrals_collection.create_index("code")
+    await referrals_collection.create_index("applied_at")
