@@ -839,21 +839,21 @@ async def edit_profile(current_user: dict, name: Optional[str], avatar_url: Opti
 # -----------------------
 # MEMOJI PRESETS (list + select)
 # -----------------------
-def _preset_urls() -> List[str]:
+def _preset_urls() -> list[str]:
     env_csv = os.getenv("CLOUDINARY_MEMOJI_PRESETS", "").strip()
     if env_csv:
         return [u.strip() for u in env_csv.split(",") if u.strip()]
-
-    # Fallback examples (replace these with your own or set env above)
-    cloud = os.getenv("CLOUDINARY_CLOUD_NAME", "demo")
-    base = f"https://res.cloudinary.com/{cloud}/image/upload/memoji"
+    # Fallback (your curated list)
     return [
-        f"{base}/01.png",
-        f"{base}/02.png",
-        f"{base}/03.png",
-        f"{base}/04.png",
-        f"{base}/05.png",
-        f"{base}/06.png",
+        "https://res.cloudinary.com/dbr8izueh/image/upload/v1763868466/e7b281cfec484abe27531fca9efb41d2-sticker_2_fsqvx2.png",
+        "https://res.cloudinary.com/dbr8izueh/image/upload/v1763868465/be794f8aa591a149945d09f83f0739b0-sticker_2_o8obkx.png",
+        "https://res.cloudinary.com/dbr8izueh/image/upload/v1763868465/d8ed05d14bd539cdbc1ed938ac2ffbb5-sticker_2_v8jpjv.png",
+        "https://res.cloudinary.com/dbr8izueh/image/upload/v1763868464/dacf38c9d80ca6546725704a1401d0c1-sticker_2_daqbhz.png",
+        "https://res.cloudinary.com/dbr8izueh/image/upload/v1763868463/cd505555b773338dbeffe7568610e9c1-sticker_2_gsi7ko.png",
+        "https://res.cloudinary.com/dbr8izueh/image/upload/v1763868464/ec3331dba6925e62ee1bf1fbf31b54db-sticker_2_mrww3e.png",
+        "https://res.cloudinary.com/dbr8izueh/image/upload/v1763868463/b76a79bc55c746dbae8109e46af12d3f-sticker_2_cmjjga.png",
+        "https://res.cloudinary.com/dbr8izueh/image/upload/v1763868441/36575686dbd0877693119dbc621bf5d9-sticker_2_imu2wp.png",
+        "https://res.cloudinary.com/dbr8izueh/image/upload/v1763868393/0671918e65d9ab86f8f969cf6a15fbeb-sticker_2_qixhqg.png",
     ]
 
 async def list_memoji_presets() -> List[str]:
