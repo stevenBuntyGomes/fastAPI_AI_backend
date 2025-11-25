@@ -19,8 +19,17 @@ class LeaderboardEntry(BaseModel):
 class FriendMeta(BaseModel):
     user_id: PyObjectId
     username: str
-    profile_picture: Optional[str] = None
+
+    # ✅ New fields
+    avatar_url: Optional[str] = None      # comes from users.avatar_url
+    profile_picture: Optional[str] = None # legacy / fallback
     aura: Optional[int] = 0
+    login_streak: int = 0
+
+    model_config = {
+        "populate_by_name": True,
+        "extra": "ignore",  # ignore any old fields that might still be in Mongo
+    }
 
 class BumpEntry(BaseModel):
     friend_id: PyObjectId

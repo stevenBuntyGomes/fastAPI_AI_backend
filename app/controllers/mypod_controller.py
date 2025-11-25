@@ -59,8 +59,8 @@ async def _ensure_mypod(owner_user_id: str) -> dict:
 async def _friend_meta_from_user(friend_user_id: str) -> dict:
     """
     Build a FriendMeta dict from the source of truth:
-    - users_collection: name/email, aura
-    - mypod_collection: profile_picture (if present)
+    - users_collection: name/email, aura, avatar_url, login_streak
+    - mypod_collection: profile_picture (legacy fallback)
     """
     friend_oid = _as_oid(friend_user_id)
 
@@ -74,8 +74,10 @@ async def _friend_meta_from_user(friend_user_id: str) -> dict:
         # store as ObjectId in Mongo; Pydantic model will stringify on response
         "user_id": friend_oid,
         "username": await _owner_username(user),
-        "profile_picture": friend_mypod.get("profile_picture"),
+        # ✅ prefer users.avatar_url; fall back to any legacy mypod.profile_picture
+        "avatar_url": user.get("avatar_url") or friend_mypod.get("profile_picture"),
         "aura": int(user.get("aura", 0)),
+        "login_streak": int(user.get("login_streak", 0)),
     }
     return meta
 
@@ -194,13 +196,23 @@ async def get_leaderboard(owner_user_id: str) -> List[FriendMeta]:
 
         user = await users_collection.find_one({"_id": uid_oid}) or {}
         aura_now = int(user.get("aura", entry.get("aura", 0)))
+        login_streak = int(user.get("login_streak", 0))
+
+        # prefer fresh avatar_url from users; fall back to any stored in MyPod
+        avatar_url = (
+            user.get("avatar_url")
+            or entry.get("avatar_url")
+            or entry.get("profile_picture")
+        )
 
         refreshed.append({
             "user_id": uid_oid,
             "username": entry.get("username"),
-            "profile_picture": entry.get("profile_picture"),
+            "avatar_url": avatar_url,
             "aura": aura_now,
+            "login_streak": login_streak,
         })
+
 
     refreshed.sort(key=lambda x: x.get("aura", 0), reverse=True)
     return [FriendMeta(**item) for item in refreshed]
@@ -217,7 +229,13 @@ async def get_global_leaderboard(skip: int = 0, limit: int = 20) -> List[FriendM
     skip = max(0, skip)
 
     # 1) Page through users by aura
-    projection = {"name": 1, "email": 1, "aura": 1}
+    projection = {
+        "name": 1,
+        "email": 1,
+        "aura": 1,
+        "avatar_url": 1,     # ✅ needed for global leaderboard
+        "login_streak": 1,   # ✅ needed for global leaderboard
+    }
     cursor = (
         users_collection.find({}, projection)
         .sort([("aura", -1), ("_id", 1)])  # stable tie-breaker by _id
@@ -239,18 +257,27 @@ async def get_global_leaderboard(skip: int = 0, limit: int = 20) -> List[FriendM
         pic_map[mp["user_id"]] = mp.get("profile_picture")
 
     # 3) Build FriendMeta array (user_id, username, profile_picture, aura)
+        # 3) Build FriendMeta array (user_id, username, avatar_url, aura, login_streak)
     out: List[FriendMeta] = []
     for u in users_page:
         username = await _owner_username(u)  # name → email prefix fallback
+
+        # prefer avatar_url on the user; fall back to any MyPod profile_picture
+        avatar_url = u.get("avatar_url") or pic_map.get(u["_id"])
+        aura = int(u.get("aura") or 0)
+        login_streak = int(u.get("login_streak") or 0)
+
         out.append(
             FriendMeta(
                 user_id=u["_id"],
                 username=username,
-                profile_picture=pic_map.get(u["_id"]),
-                aura=int(u.get("aura") or 0),
+                avatar_url=avatar_url,
+                aura=aura,
+                login_streak=login_streak,
             )
         )
     return out
+
 
 
 # --- NEW: Rebuild rank & leaderboard_data for THIS user only ---
@@ -287,9 +314,16 @@ async def rebuild_rank_for_user(user_id: str, top_n: int = 20) -> int:
         oids.append(me_oid)
 
     # Pull aura + names
+    # Pull aura + names + avatar + streak
     cursor = users_collection.find(
         {"_id": {"$in": oids}},
-        {"name": 1, "email": 1, "profile_picture": 1, "aura": 1},
+        {
+            "name": 1,
+            "email": 1,
+            "avatar_url": 1,     # ✅ use avatar_url now
+            "aura": 1,
+            "login_streak": 1,   # ✅ needed for LeaderboardEntry
+        },
     )
     docs = await cursor.to_list(length=10000)
 
@@ -303,8 +337,10 @@ async def rebuild_rank_for_user(user_id: str, top_n: int = 20) -> int:
     rows = [{
         "user_id": str(u["_id"]),
         "username": _username(u),
-        "profile_picture": (u.get("profile_picture") or None),
+        # LeaderboardEntry uses 'profile_picture' field, so we store avatar_url there
+        "profile_picture": (u.get("avatar_url") or None),
         "aura": int(u.get("aura") or 0),
+        "login_streak": int(u.get("login_streak") or 0),
     } for u in docs]
 
     rows.sort(key=lambda r: r["aura"], reverse=True)
