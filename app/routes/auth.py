@@ -96,7 +96,12 @@ async def google_login(payload: GoogleLoginRequest):
 
 @router.post("/apple", response_model=AuthResponse, summary="Login with Apple")
 async def apple_login(payload: AppleLoginRequest):
-    return await login_with_apple(payload.identity_token, payload.onboarding_id)
+    return await login_with_apple(
+        payload.identity_token,
+        payload.full_name,        # 👈 pass the name through
+        payload.onboarding_id,
+    )
+
 
 # ----------------------
 # Onboarding convenience

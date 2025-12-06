@@ -285,7 +285,18 @@ async def login_with_google(token_id: str, onboarding_id: Optional[str] = None) 
 # -----------------------
 # STEP 5: Login with Apple OAuth
 # -----------------------
-async def login_with_apple(identity_token: str, onboarding_id: Optional[str] = None) -> AuthResponse:
+async def login_with_apple(
+    identity_token: str,
+    full_name: Optional[str] = None,
+    onboarding_id: Optional[str] = None,
+) -> AuthResponse:
+    """
+    Login / register with Apple OAuth.
+
+    - Uses `full_name` coming from the client when available
+    - Falls back to whatever the Apple token exposes
+    - Final fallback is "Apple User"
+    """
     payload = verify_apple_token(identity_token)
     if not payload:
         raise HTTPException(status_code=401, detail="❌ Invalid Apple token.")
@@ -300,10 +311,45 @@ async def login_with_apple(identity_token: str, onboarding_id: Optional[str] = N
             ),
         )
 
-    name = payload.get("name", "Apple User")
+    # ---------------------------------------------------
+    # Decide display name (prefer client-sent full_name)
+    # ---------------------------------------------------
+    name_candidate: Optional[str] = None
 
+    # 1) Prefer full_name from frontend
+    if full_name and full_name.strip():
+        name_candidate = full_name.strip()
+
+    # 2) Try any direct name field in the token
+    elif payload.get("name"):
+        name_candidate = str(payload["name"]).strip()
+    else:
+        # 3) Try combinations of given/family name keys that libs may use
+        given_name = (
+            payload.get("given_name")
+            or payload.get("givenName")
+            or payload.get("first_name")
+            or payload.get("firstName")
+        )
+        family_name = (
+            payload.get("family_name")
+            or payload.get("familyName")
+            or payload.get("last_name")
+            or payload.get("lastName")
+        )
+        parts = [p for p in [given_name, family_name] if p]
+        if parts:
+            name_candidate = " ".join(str(p).strip() for p in parts if str(p).strip())
+
+    # 4) Final fallback
+    name = name_candidate or "Apple User"
+
+    # ---------------------------------------------------
+    # Lookup or create user
+    # ---------------------------------------------------
     user = await users_collection.find_one({"email": email})
     if not user:
+        # New user: validate onboarding_id if passed
         ob_obj: Optional[ObjectId] = None
         if onboarding_id:
             try:
@@ -313,6 +359,7 @@ async def login_with_apple(identity_token: str, onboarding_id: Optional[str] = N
             if not await onboarding_collection.find_one({"_id": ob_obj}):
                 raise HTTPException(status_code=400, detail="onboarding_id does not exist")
 
+        # Generate unique username from name
         username, username_lc = await _generate_unique_username_from_name(name)
 
         result = await users_collection.insert_one(
@@ -323,7 +370,7 @@ async def login_with_apple(identity_token: str, onboarding_id: Optional[str] = N
                 "aura": 0,
                 "login_streak": 0,
                 "onboarding_id": ob_obj,
-                "avatar_url": None,       # ✅ RENAMED
+                "avatar_url": None,
                 "username": username,
                 "username_lc": username_lc,
                 "created_at": datetime.utcnow(),
@@ -342,15 +389,25 @@ async def login_with_apple(identity_token: str, onboarding_id: Optional[str] = N
             "username_lc": username_lc,
         }
     else:
+        # Existing user: backfill username if missing
         if not user.get("username"):
-            gen_username, gen_username_lc = await _generate_unique_username_from_name(user.get("name") or email.split("@")[0])
+            gen_username, gen_username_lc = await _generate_unique_username_from_name(
+                user.get("name") or email.split("@")[0]
+            )
             await users_collection.update_one(
                 {"_id": user["_id"]},
-                {"$set": {"username": gen_username, "username_lc": gen_username_lc, "updated_at": datetime.utcnow()}}
+                {
+                    "$set": {
+                        "username": gen_username,
+                        "username_lc": gen_username_lc,
+                        "updated_at": datetime.utcnow(),
+                    }
+                },
             )
             user["username"] = gen_username
             user["username_lc"] = gen_username_lc
 
+        # Link onboarding_id if provided and not already set
         if onboarding_id and not user.get("onboarding_id"):
             try:
                 ob_obj = ObjectId(onboarding_id)
@@ -360,10 +417,21 @@ async def login_with_apple(identity_token: str, onboarding_id: Optional[str] = N
                 raise HTTPException(status_code=400, detail="onboarding_id does not exist")
             await users_collection.update_one(
                 {"_id": user["_id"]},
-                {"$set": {"onboarding_id": ob_obj, "updated_at": datetime.utcnow()}}
+                {"$set": {"onboarding_id": ob_obj, "updated_at": datetime.utcnow()}},
             )
             user["onboarding_id"] = ob_obj
 
+        # Optional: if user has no name yet and we got a real one, you could backfill:
+        # if (not user.get("name")) and name != "Apple User":
+        #     await users_collection.update_one(
+        #         {"_id": user["_id"]},
+        #         {"$set": {"name": name, "updated_at": datetime.utcnow()}}
+        #     )
+        #     user["name"] = name
+
+    # ---------------------------------------------------
+    # Build response
+    # ---------------------------------------------------
     token = create_jwt_token({"user_id": str(user["_id"])})
     user_out = UserOut(
         id=str(user["_id"]),

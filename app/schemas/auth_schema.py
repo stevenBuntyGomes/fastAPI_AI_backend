@@ -28,7 +28,9 @@ class GoogleLoginRequest(BaseModel):
 
 class AppleLoginRequest(BaseModel):
     identity_token: str
+    full_name: Optional[str] = None   # 👈 NEW – name coming from iOS
     onboarding_id: Optional[str] = None
+
 
 # ✅ RENAMED: Set avatar (kept route path /auth/profile/memoji)
 class SetAvatarRequest(BaseModel):
