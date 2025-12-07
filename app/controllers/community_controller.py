@@ -8,6 +8,7 @@ from fastapi import HTTPException
 import random
 
 from ..db.mongo import community_collection, users_collection
+
 # blocks_collection is optional – if it's not defined in your db module yet, we'll handle it gracefully.
 try:
     from ..db.mongo import blocks_collection  # added for block-aware feeds
@@ -33,24 +34,28 @@ from ..utils.moderation import moderate_text
 async def increment_user_aura(user_id: str):
     await users_collection.update_one({"_id": ObjectId(user_id)}, {"$inc": {"aura": 1}})
 
+
 async def decrement_user_aura(user_id: str):
     await users_collection.update_one({"_id": ObjectId(user_id)}, {"$inc": {"aura": -1}})
+
 
 async def generate_comment_id(user_id: str) -> str:
     random_part = "".join([str(random.randint(0, 9)) for _ in range(6)])
     return f"{user_id}_{random_part}"
+
 
 def _ensure_oid(id_str: str) -> ObjectId:
     if not ObjectId.is_valid(id_str):
         raise HTTPException(status_code=400, detail="❌ Invalid ObjectId")
     return ObjectId(id_str)
 
+
 def _post_to_response_dict(doc: dict) -> dict:
     """
     Return only the fields PostResponse expects.
     Avoid leaking extra DB fields (e.g., moderation/status) that might break Pydantic schema.
     """
-    return {
+    base = {
         "id": str(doc.get("_id") or doc.get("id")),
         "post_text": doc.get("post_text", ""),
         "post_author_id": str(doc.get("post_author_id")),
@@ -59,9 +64,13 @@ def _post_to_response_dict(doc: dict) -> dict:
         "likes_count": int(doc.get("likes_count", 0)),
         "liked_by": list(doc.get("liked_by", [])),
         "comments": list(doc.get("comments", [])),
-        # If your PostResponse includes "author", we’ll attach it where we build posts.
-        **({"author": doc["author"]} if "author" in doc else {}),
     }
+
+    # If your PostResponse includes "author", attach it
+    if "author" in doc:
+        base["author"] = doc["author"]
+
+    return base
 
 
 # ---------------------------
@@ -115,8 +124,6 @@ async def remove_post_by_id(post_id: str, current_user: dict):
 # Feed (block-aware, author/comment enrichment)
 # ---------------------------
 
-# from ..models.auth import UserModel  # Not used directly here, kept if your app relies on it elsewhere.
-
 async def get_all_posts(current_user: dict, skip: int = 0, limit: int = 6) -> List[PostResponse]:
     # Determine blocked users (if feature exists)
     blocked = []
@@ -128,8 +135,12 @@ async def get_all_posts(current_user: dict, skip: int = 0, limit: int = 6) -> Li
     query = {
         "post_visibility": {"$in": ["community", "friends_only"]},
         "post_author_id": {"$nin": blocked},
-        "$or": [ {"status": {"$exists": False}}, {"status": "visible"} ], # exclude hidden posts
+        "$or": [
+            {"status": {"$exists": False}},
+            {"status": "visible"},
+        ],  # exclude hidden posts
     }
+
     cursor = (
         community_collection.find(query)
         .sort("post_timestamp", -1)
@@ -142,12 +153,15 @@ async def get_all_posts(current_user: dict, skip: int = 0, limit: int = 6) -> Li
         # 🔍 Attach author
         author = None
         try:
-            author_doc = await users_collection.find_one({"_id": _ensure_oid(doc["post_author_id"])})
+            author_doc = await users_collection.find_one(
+                {"_id": _ensure_oid(doc["post_author_id"])}
+            )
             if author_doc:
                 author = {
                     "id": str(author_doc["_id"]),
                     "name": author_doc.get("name"),
-                    "profile_picture": author_doc.get("profile_picture"),
+                    # ✅ Use avatar_url (fallback to legacy memoji_url if present)
+                    "avatar_url": author_doc.get("avatar_url") or author_doc.get("memoji_url"),
                 }
         except HTTPException:
             author = None
@@ -155,21 +169,29 @@ async def get_all_posts(current_user: dict, skip: int = 0, limit: int = 6) -> Li
         # 🔄 Enrich comments with author info (and keep IDs stable)
         enriched_comments = []
         for c in doc.get("comments", []):
-            if c.get("status") == "hidden":      # ← excluded hidden posts
+            # Skip hidden comments if you start marking them
+            if c.get("status") == "hidden":
                 continue
+
+            # Ensure each comment has a stable id
             if "id" not in c:
                 c["id"] = await generate_comment_id(c.get("comment_author_id", "unknown"))
+
             c_author = None
             try:
-                c_doc = await users_collection.find_one({"_id": _ensure_oid(c["comment_author_id"])})
+                c_doc = await users_collection.find_one(
+                    {"_id": _ensure_oid(c["comment_author_id"])}
+                )
                 if c_doc:
                     c_author = {
                         "id": str(c_doc["_id"]),
                         "name": c_doc.get("name"),
-                        "profile_picture": c_doc.get("profile_picture"),
+                        # ✅ Use avatar_url (fallback to memoji_url)
+                        "avatar_url": c_doc.get("avatar_url") or c_doc.get("memoji_url"),
                     }
             except Exception:
                 c_author = None
+
             c["author"] = c_author
             enriched_comments.append(c)
 
@@ -198,12 +220,22 @@ async def like_post(post_id: str, current_user: dict) -> PostResponse:
     already_liked = user_id_str in post.get("liked_by", [])
 
     if not already_liked:
-        await community_collection.update_one({"_id": oid}, {"$addToSet": {"liked_by": user_id_str}})
-        await community_collection.update_one({"_id": oid}, {"$inc": {"likes_count": 1}})
+        await community_collection.update_one(
+            {"_id": oid},
+            {
+                "$addToSet": {"liked_by": user_id_str},
+                "$inc": {"likes_count": 1},
+            },
+        )
         await increment_user_aura(user_id_str)
     else:
-        await community_collection.update_one({"_id": oid}, {"$pull": {"liked_by": user_id_str}})
-        await community_collection.update_one({"_id": oid}, {"$inc": {"likes_count": -1}})
+        await community_collection.update_one(
+            {"_id": oid},
+            {
+                "$pull": {"liked_by": user_id_str},
+                "$inc": {"likes_count": -1},
+            },
+        )
         await decrement_user_aura(user_id_str)
 
     updated = await community_collection.find_one({"_id": oid})
@@ -214,7 +246,11 @@ async def like_post(post_id: str, current_user: dict) -> PostResponse:
 # Comments (add / update / delete)
 # ---------------------------
 
-async def add_comment(post_id: str, comment_data: CommentCreateRequest, current_user: dict) -> PostResponse:
+async def add_comment(
+    post_id: str,
+    comment_data: CommentCreateRequest,
+    current_user: dict,
+) -> PostResponse:
     oid = _ensure_oid(post_id)
     user_id = str(current_user["_id"])
 
@@ -231,7 +267,10 @@ async def add_comment(post_id: str, comment_data: CommentCreateRequest, current_
         # "status": "hidden" if m["flagged"] else "visible",
     }
 
-    result = await community_collection.update_one({"_id": oid}, {"$push": {"comments": comment}})
+    result = await community_collection.update_one(
+        {"_id": oid},
+        {"$push": {"comments": comment}},
+    )
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Post not found")
 
@@ -241,14 +280,19 @@ async def add_comment(post_id: str, comment_data: CommentCreateRequest, current_
     return PostResponse(**_post_to_response_dict(updated))
 
 
-async def update_comment(post_id: str, comment_id: str, new_text: str, current_user: dict) -> PostResponse:
+async def update_comment(
+    post_id: str,
+    comment_id: str,
+    new_text: str,
+    current_user: dict,
+) -> PostResponse:
     oid = _ensure_oid(post_id)
     post = await community_collection.find_one({"_id": oid})
     if not post:
         raise HTTPException(status_code=404, detail="Post not found")
 
     comments = post.get("comments", [])
-    updated = False
+    updated_flag = False
 
     # 🔎 Sanitize new text
     m = moderate_text(new_text, "en")
@@ -257,16 +301,18 @@ async def update_comment(post_id: str, comment_id: str, new_text: str, current_u
         if c.get("id") == comment_id:
             if str(c["comment_author_id"]) != str(current_user["_id"]):
                 raise HTTPException(status_code=403, detail="Not authorized to edit this comment")
+
             c["comment_text"] = m["cleaned"]
             c["comment_timestamp"] = datetime.utcnow()
             # Optional internal flags:
             # c["moderation"] = {"flagged": m["flagged"], "reason": m["reason"]}
-            # if m["flagged"]: c["status"] = "hidden"
+            # if m["flagged"]:
+            #     c["status"] = "hidden"
             comments[i] = c
-            updated = True
+            updated_flag = True
             break
 
-    if not updated:
+    if not updated_flag:
         raise HTTPException(status_code=404, detail="Comment not found")
 
     await community_collection.update_one({"_id": oid}, {"$set": {"comments": comments}})
@@ -275,7 +321,11 @@ async def update_comment(post_id: str, comment_id: str, new_text: str, current_u
     return PostResponse(**_post_to_response_dict(updated_post))
 
 
-async def delete_comment(post_id: str, comment_id: str, current_user: dict) -> PostResponse:
+async def delete_comment(
+    post_id: str,
+    comment_id: str,
+    current_user: dict,
+) -> PostResponse:
     oid = _ensure_oid(post_id)
     post = await community_collection.find_one({"_id": oid})
     if not post:
@@ -296,7 +346,10 @@ async def delete_comment(post_id: str, comment_id: str, current_user: dict) -> P
     if not found:
         raise HTTPException(status_code=404, detail="Comment not found")
 
-    await community_collection.update_one({"_id": oid}, {"$set": {"comments": updated_comments}})
+    await community_collection.update_one(
+        {"_id": oid},
+        {"$set": {"comments": updated_comments}},
+    )
 
     updated_post = await community_collection.find_one({"_id": oid})
     return PostResponse(**_post_to_response_dict(updated_post))
@@ -324,6 +377,7 @@ async def update_post(post_id: str, data: PostUpdateRequest, user_id: str):
         # update_data["moderation"] = {"flagged": m["flagged"], "reason": m["reason"]}
         # if m["flagged"]:
         #     update_data["status"] = "hidden"
+
     if data.post_visibility is not None:
         update_data["post_visibility"] = data.post_visibility
 

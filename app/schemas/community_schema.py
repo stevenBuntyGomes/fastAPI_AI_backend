@@ -3,13 +3,17 @@ from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime
 
+
 class AuthorPreview(BaseModel):
     id: str
     name: Optional[str]
-    profile_picture: Optional[str] = None
+    # ✅ Use avatar_url instead of profile_picture
+    avatar_url: Optional[str] = None
+
 
 class CommentCreateRequest(BaseModel):
     comment_text: str
+
 
 # Comment Schema
 class CommentSchema(BaseModel):
@@ -18,6 +22,7 @@ class CommentSchema(BaseModel):
     comment_author_id: str
     comment_timestamp: Optional[datetime] = None
     author: Optional[AuthorPreview] = None
+
 
 # Post Schema
 class PostSchema(BaseModel):
@@ -29,11 +34,13 @@ class PostSchema(BaseModel):
     liked_by: List[str] = []
     comments: List[CommentSchema] = []
 
+
 # User Social Stats
 class UserSocialStatsSchema(BaseModel):
     posts: int = 0
     likes_given: int = 0
     comments: int = 0
+
 
 # Full Community Schema
 class CommunitySchema(BaseModel):
@@ -43,14 +50,17 @@ class CommunitySchema(BaseModel):
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
+
 # Post Update Schema
 class PostUpdateRequest(BaseModel):
     post_text: Optional[str] = None
     post_visibility: Optional[str] = None
 
+
 class PostCreateRequest(BaseModel):
     post_text: str
     post_visibility: str  # e.g., "community" or "friends_only"
+
 
 class PostResponse(BaseModel):
     id: str  # assuming MongoDB ObjectId will be serialized as string
